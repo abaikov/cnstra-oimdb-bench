@@ -85,6 +85,8 @@ function createBenchmarkRunner() {
       const scenarioResults: BenchmarkMetrics[] = [];
       
       for (let i = 0; i < runs; i++) {
+        // Reset render counters per run to avoid accumulation across runs/scenarios
+        renderCounter.reset();
         const fpsMeter = createFpsMeter();
         const latencies: number[] = [];
         
@@ -327,6 +329,7 @@ export const App: React.FC = () => {
   const handleClearResults = () => {
     setBenchmarkResults([]);
     benchmarkRunner.clearResults();
+    renderCounter.reset();
   };
 
   if (showResults) {
