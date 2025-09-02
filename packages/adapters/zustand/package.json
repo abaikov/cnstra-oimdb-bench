@@ -9,5 +9,6 @@
   "files": ["dist"],
   "scripts": {"build": "tsc -p tsconfig.build.json"},
   "devDependencies": {"typescript": "^5.5.4"},
-  "peerDependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"}
+  "peerDependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"},
+  "dependencies": {"zustand": "^4.5.2"}
 }

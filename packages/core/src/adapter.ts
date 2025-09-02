@@ -1,3 +1,4 @@
+import type React from 'react';
 import type { RootState, ID, Deck, Card, Comment, User, NormalizedEntities, CardAssignment, CardTag } from './types';
 
 export type StoreHandle = unknown;
@@ -5,8 +6,8 @@ export type StoreHandle = unknown;
 export type ViewModelHooks = {
   useDeckIds(): ID[];
   useDeckById(id: ID): Deck | undefined;
-  useCardsByDeckId(deckId: ID, limit?: number): Card[];
-  useCommentsByCardId(cardId: ID, limit?: number): Comment[];
+  useCardsByDeckId(deckId: ID): Card[];
+  useCommentsByCardId(cardId: ID): Comment[];
   useUserById(id: ID): User | undefined;
   useAssigneesByCardId(cardId: ID): User[];
   useTagsByCardId(cardId: ID): string[];
@@ -30,6 +31,7 @@ export type StoreAdapter = {
     Provider: (props: { store: StoreHandle; children?: any }) => any;
     hooks: ViewModelHooks;
     bindActions(store: StoreHandle): Actions;
+    wrapComponent?: (Component: React.ComponentType<any>) => React.ComponentType<any>;
 };
 
 export type Dataset = RootState;
@@ -73,4 +75,4 @@ export type MetricsHarness = {
   };
 };
 
-export type { RootState, ID, Deck, Card, Comment, User, NormalizedEntities };
+export type { RootState, ID, Deck, Card, Comment, User, NormalizedEntities, CardAssignment, CardTag };

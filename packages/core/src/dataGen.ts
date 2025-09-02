@@ -156,7 +156,6 @@ export function generateDataset(opts: DataGenOptions = {}): RootState {
   const dataset: RootState = {
     entities,
     decksOrder,
-    searchQuery: '',
     activeDeckId: decksOrder[0] ?? null,
   };
 

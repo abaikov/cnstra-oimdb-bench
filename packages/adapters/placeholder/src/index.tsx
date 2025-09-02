@@ -78,20 +78,7 @@ function shallowEqualStrings(a: string[] | undefined, b: string[] | undefined): 
 
 const hooks = {
   useDeckIds(): ID[] {
-    return useSelector(
-      (s) => {
-        const q = s.searchQuery.trim().toLowerCase();
-        if (!q) return s.decksOrder;
-        const result: ID[] = [];
-        for (const id of s.decksOrder) {
-          const d = s.entities.decks[id];
-          if (!d) continue;
-          if (d.title.toLowerCase().includes(q)) result.push(id);
-        }
-        return result;
-      },
-      shallowEqualStrings
-    );
+    return useSelector((s) => s.decksOrder, shallowEqualStrings);
   },
   useDeckById(id: ID): Deck | undefined {
     return useSelector((s) => s.entities.decks[id]);
@@ -150,18 +137,14 @@ const hooks = {
   useActiveDeckId(): ID | null {
     return useSelector((s) => s.activeDeckId);
   },
-  useSearchQuery(): string {
-    return useSelector((s) => s.searchQuery);
-  },
+  // search removed
 };
 
 const actions = (store: SimpleStore) => ({
   setActiveDeck(id: ID) {
     store.setState((s) => ({ ...s, activeDeckId: id }));
   },
-  setSearchQuery(q: string) {
-    store.setState((s) => ({ ...s, searchQuery: q }));
-  },
+  // search removed
   updateCommentText(commentId: ID, text: string) {
     store.setState((s) => {
       const existing = s.entities.comments[commentId];
@@ -224,7 +207,7 @@ const actions = (store: SimpleStore) => ({
       const cards = { ...s.entities.cards };
       let i = 0;
       for (const id of Object.keys(cards)) {
-        if (i++ > 10) break;
+        if (i++ > 100) break;
         const c = cards[id]!;
         cards[id] = { ...c, updatedAt: Date.now() };
       }

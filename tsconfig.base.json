@@ -17,7 +17,7 @@
       "@bench/adapter-cnstra-oimdb": ["packages/adapters/cnstra-oimdb/src/index.tsx"],
       "@bench/adapter-redux": ["packages/adapters/redux/src/index.ts"],
       "@bench/adapter-effector": ["packages/adapters/effector/src/index.ts"],
-      "@bench/adapter-mobx": ["packages/adapters/mobx/src/index.ts"],
+      "@bench/adapter-mobx": ["packages/adapters/mobx/src/index.tsx"],
       "@bench/adapter-zustand": ["packages/adapters/zustand/src/index.ts"],
       "@bench/adapter-recoil": ["packages/adapters/recoil/src/index.ts"],
       "@bench/adapter-jotai": ["packages/adapters/jotai/src/index.ts"],

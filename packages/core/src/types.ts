@@ -65,6 +65,5 @@ export type NormalizedEntities = {
 export type RootState = {
   entities: NormalizedEntities;
   decksOrder: ID[];
-  searchQuery: string;
   activeDeckId: ID | null;
 };

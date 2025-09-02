@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { configureStore, createSlice, createEntityAdapter } from '@reduxjs/toolkit';
 import { Provider, useSelector, useDispatch } from 'react-redux';
 import type { StoreAdapter, StoreHandle } from '@bench/core';
@@ -78,14 +78,10 @@ const cardTagsSlice = createSlice({
 const appSlice = createSlice({
   name: 'app',
   initialState: {
-    searchQuery: '',
     activeDeckId: null as ID | null,
     decksOrder: [] as ID[],
   },
   reducers: {
-    setSearchQuery: (state, action) => {
-      state.searchQuery = action.payload;
-    },
     setActiveDeck: (state, action) => {
       state.activeDeckId = action.payload;
     },
@@ -107,6 +103,11 @@ function createReduxStore(initialData: RootState) {
       cardTags: cardTagsSlice.reducer,
       app: appSlice.reducer,
     },
+    middleware: (getDefaultMiddleware) =>
+      getDefaultMiddleware({
+        serializableCheck: false,
+        immutableCheck: false,
+      }),
   });
 
   // Initialize data
@@ -117,7 +118,6 @@ function createReduxStore(initialData: RootState) {
   store.dispatch(tagsSlice.actions.setTags(Object.values(initialData.entities.tags)));
   store.dispatch(cardAssignmentsSlice.actions.setCardAssignments(Object.values(initialData.entities.cardAssignments)));
   store.dispatch(cardTagsSlice.actions.setCardTags(Object.values(initialData.entities.cardTags)));
-  store.dispatch(appSlice.actions.setSearchQuery(initialData.searchQuery));
   store.dispatch(appSlice.actions.setActiveDeck(initialData.activeDeckId));
   store.dispatch(appSlice.actions.setDecksOrder(initialData.decksOrder));
 
@@ -133,17 +133,8 @@ const ReduxProvider: React.FC<{ store: StoreHandle; children?: React.ReactNode }
 
 const hooks = {
   useDeckIds(): ID[] {
-    const searchQuery = useSelector((state: RootReduxState) => state.app.searchQuery);
     const decksOrder = useSelector((state: RootReduxState) => state.app.decksOrder);
-    const decks = useSelector((state: RootReduxState) => state.decks.entities);
-    
-    if (!searchQuery.trim()) return decksOrder;
-    
-    const query = searchQuery.trim().toLowerCase();
-    return decksOrder.filter(id => {
-      const deck = decks[id];
-      return deck && deck.title.toLowerCase().includes(query);
-    });
+    return decksOrder;
   },
 
   useDeckById(id: ID): Deck | undefined {
@@ -154,38 +145,45 @@ const hooks = {
     return useSelector((state: RootReduxState) => state.cards.entities[id]);
   },
 
-  useCardsByDeckId(deckId: ID, limit = 3): Card[] {
-    return useSelector((state: RootReduxState) => {
-      const allCards = Object.values(state.cards.entities).filter(card => card?.deckId === deckId);
-      return allCards as Card[];
-    });
+  useCardsByDeckId(deckId: ID): Card[] {
+    const cardsEntities = useSelector((state: RootReduxState) => state.cards.entities);
+    
+    return useMemo(() => {
+      return Object.values(cardsEntities).filter(card => card?.deckId === deckId) as Card[];
+    }, [cardsEntities, deckId]);
   },
 
   useAssigneesByCardId(cardId: ID): User[] {
-    return useSelector((state: RootReduxState) => {
-      const assignments = Object.values(state.cardAssignments.entities).filter(a => a?.cardId === cardId);
-      const users = assignments.map(a => state.users.entities[a?.userId || '']).filter(Boolean) as User[];
+    const cardAssignmentsEntities = useSelector((state: RootReduxState) => state.cardAssignments.entities);
+    const usersEntities = useSelector((state: RootReduxState) => state.users.entities);
+    
+    return useMemo(() => {
+      const assignments = Object.values(cardAssignmentsEntities).filter(a => a?.cardId === cardId);
+      const users = assignments.map(a => usersEntities[a?.userId || '']).filter(Boolean) as User[];
       return users;
-    });
+    }, [cardAssignmentsEntities, usersEntities, cardId]);
   },
 
   useTagsByCardId(cardId: ID): string[] {
-    return useSelector((state: RootReduxState) => {
-      const cardTags = Object.values(state.cardTags.entities).filter(ct => ct?.cardId === cardId);
+    const cardTagsEntities = useSelector((state: RootReduxState) => state.cardTags.entities);
+    
+    return useMemo(() => {
+      const cardTags = Object.values(cardTagsEntities).filter(ct => ct?.cardId === cardId);
       const tagIds = cardTags.map(ct => ct?.tagId).filter(Boolean) as string[];
       return tagIds;
-    });
+    }, [cardTagsEntities, cardId]);
   },
 
   useCommentById(id: ID): Comment | undefined {
     return useSelector((state: RootReduxState) => state.comments.entities[id]);
   },
 
-  useCommentsByCardId(cardId: ID, limit = 3): Comment[] {
-    return useSelector((state: RootReduxState) => {
-      const allComments = Object.values(state.comments.entities).filter(comment => comment?.cardId === cardId);
-      return allComments as Comment[];
-    });
+  useCommentsByCardId(cardId: ID): Comment[] {
+    const commentsEntities = useSelector((state: RootReduxState) => state.comments.entities);
+    
+    return useMemo(() => {
+      return Object.values(commentsEntities).filter(comment => comment?.cardId === cardId) as Comment[];
+    }, [commentsEntities, cardId]);
   },
 
   useUserById(id: ID): User | undefined {
@@ -196,9 +194,7 @@ const hooks = {
     return useSelector((state: RootReduxState) => state.app.activeDeckId);
   },
 
-  useSearchQuery(): string {
-    return useSelector((state: RootReduxState) => state.app.searchQuery);
-  },
+  // search removed
 };
 
 const actions = (store: ReduxStore) => ({
@@ -254,10 +250,8 @@ const actions = (store: ReduxStore) => ({
 
   backgroundChurnStart() {
     const state = store.getState();
-    const cardIds = state.app.decksOrder.slice(0, 2).flatMap(deckId => {
-      const allCards = Object.values(state.cards.entities).filter(card => card?.deckId === deckId);
-      return allCards.slice(0, 5).map(card => card?.id).filter(Boolean) as string[];
-    });
+    const allCards = Object.values(state.cards.entities);
+    const cardIds = allCards.slice(0, 100).map(card => card?.id).filter(Boolean) as string[];
     
     cardIds.forEach(cardId => {
       store.dispatch(cardsSlice.actions.updateCard({
