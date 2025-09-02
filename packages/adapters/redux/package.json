@@ -1,0 +1,19 @@
+{
+  "name": "@bench/adapter-redux",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.tsx",
+  "module": "src/index.tsx",
+  "types": "src/index.tsx",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.2.7",
+    "react-redux": "^9.1.2"
+  },
+  "devDependencies": {"typescript": "^5.5.4", "@types/react": "^18.2.21"},
+  "peerDependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"}
+}

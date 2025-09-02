@@ -1,0 +1,40 @@
+{
+  "name": "cnstra-oimdb-bench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Benchmark/demo app comparing React state managers with focus on @cnstra/react and @oimdb/react.",
+  "author": "Andrei Baikov",
+  "license": "MIT",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/adapters/*"
+  ],
+  "scripts": {
+    "dev": "npm run -w @bench/bench dev",
+    "build": "npm run -w @bench/bench build",
+    "preview": "npm run -w @bench/bench preview",
+    "lint": "echo 'No lint configured'",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "nx": "nx"
+  },
+  "devDependencies": {
+    "@nx/workspace": "^19.0.0",
+    "nx": "^19.0.0",
+    "typescript": "^5.5.4",
+    "prettier": "^3.3.3",
+    "vite": "^5.4.19",
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite-tsconfig-paths": "^5.1.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abaikov/cnstra-oimdb-bench.git"
+  },
+  "bugs": {
+    "url": "https://github.com/abaikov/cnstra-oimdb-bench/issues"
+  },
+  "homepage": "https://github.com/abaikov/cnstra-oimdb-bench#readme"
+}

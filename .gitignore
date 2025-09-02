@@ -137,3 +137,12 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# TypeScript compiled files (should only exist in dist/ folders)
+**/src/**/*.js
+**/src/**/*.d.ts
+
+
+# nx cache
+.nx
+.claude/
