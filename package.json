@@ -12,13 +12,22 @@
     "packages/adapters/*"
   ],
   "scripts": {
+    "count-loc": "node scripts/count-loc.js",
+    "prebuild": "npm run count-loc",
+    "predev": "npm run count-loc",
     "dev": "npm run -w @bench/bench dev",
     "build": "npm run -w @bench/bench build",
     "preview": "npm run -w @bench/bench preview",
+    "bench": "node scripts/bench-with-server.mjs",
+    "bench:summary": "node scripts/bench-summary.mjs",
     "lint": "echo 'No lint configured'",
+    "typecheck": "tsc -b --pretty",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "nx": "nx"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "devDependencies": {
     "@nx/workspace": "^19.0.0",
@@ -27,7 +36,8 @@
     "prettier": "^3.3.3",
     "vite": "^5.4.19",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite-tsconfig-paths": "^5.1.3"
+    "vite-tsconfig-paths": "^5.1.3",
+    "puppeteer": "^21.6.1"
   },
   "repository": {
     "type": "git",

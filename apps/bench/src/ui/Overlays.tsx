@@ -19,9 +19,36 @@ export const FpsGauge: React.FC = () => {
         raf = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(raf);
     }, []);
+
+    const getFpsColor = () => {
+        if (fps >= 55) return '#4CAF50';
+        if (fps >= 30) return '#FF9800';
+        return '#F44336';
+    };
+
     return (
-        <div style={{ position: 'fixed', left: 10, bottom: 10, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: 8, borderRadius: 6, fontSize: 12 }}>
-            FPS: {fps}
+        <div
+            style={{
+                position: 'fixed',
+                left: 20,
+                bottom: 20,
+                background: 'rgba(255,255,255,0.95)',
+                color: '#333',
+                padding: '12px 16px',
+                borderRadius: '10px',
+                fontSize: 14,
+                fontWeight: 600,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                border: `2px solid ${getFpsColor()}`,
+                backdropFilter: 'blur(10px)',
+                minWidth: 100,
+                textAlign: 'center',
+            }}
+        >
+            <div style={{ fontSize: 11, color: '#666', marginBottom: 4, fontWeight: 500 }}>
+                🎮 FPS
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: getFpsColor() }}>{fps}</div>
         </div>
     );
 };
@@ -40,14 +67,47 @@ export const KeystrokeLatency: React.FC<{ value: string }> = ({ value }) => {
         });
         return () => cancelAnimationFrame(handle);
     }, [value]);
+
+    const getLatencyColor = () => {
+        if (!latency) return '#999';
+        if (latency < 16) return '#4CAF50';
+        if (latency < 50) return '#FF9800';
+        return '#F44336';
+    };
+
     return (
-        <div style={{ position: 'fixed', left: 10, bottom: 40, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: 8, borderRadius: 6, fontSize: 12 }}>
-            Latency: {latency ? Math.round(latency) : '-'} ms
+        <div
+            style={{
+                position: 'fixed',
+                left: 20,
+                bottom: 90,
+                background: 'rgba(255,255,255,0.95)',
+                color: '#333',
+                padding: '12px 16px',
+                borderRadius: '10px',
+                fontSize: 14,
+                fontWeight: 600,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                border: `2px solid ${getLatencyColor()}`,
+                backdropFilter: 'blur(10px)',
+                minWidth: 140,
+                textAlign: 'center',
+            }}
+        >
+            <div style={{ fontSize: 11, color: '#666', marginBottom: 4, fontWeight: 500 }}>
+                ⌨️ Latency
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: getLatencyColor() }}>
+                {latency ? `${Math.round(latency)} ms` : '-'}
+            </div>
         </div>
     );
 };
 
-export const MountProfiler: React.FC<{ onTTI: (ms: number) => void; children?: React.ReactNode }> = ({ onTTI, children }) => {
+export const MountProfiler: React.FC<{
+    onTTI: (ms: number) => void;
+    children?: React.ReactNode;
+}> = ({ onTTI, children }) => {
     const start = useRef(performance.now());
     useEffect(() => {
         const tti = performance.now() - start.current;

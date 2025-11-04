@@ -1,0 +1,38 @@
+{
+  "_comment": "⚠️ AUTO-GENERATED FILE - Do not edit manually! Run 'npm run count-loc' to update after modifying adapter code.",
+  "generated": "2025-11-03T21:46:08.225Z",
+  "adapters": {
+    "Cnstra + Oimdb": {
+      "linesOfCode": 363,
+      "totalLines": 384,
+      "blankLines": 17,
+      "commentLines": 4,
+      "files": 1,
+      "lastUpdated": "2025-11-03T21:46:08.220Z"
+    },
+    "Effector": {
+      "linesOfCode": 541,
+      "totalLines": 627,
+      "blankLines": 50,
+      "commentLines": 36,
+      "files": 2,
+      "lastUpdated": "2025-11-03T21:46:08.223Z"
+    },
+    "Redux Toolkit": {
+      "linesOfCode": 517,
+      "totalLines": 615,
+      "blankLines": 44,
+      "commentLines": 54,
+      "files": 1,
+      "lastUpdated": "2025-11-03T21:46:08.224Z"
+    },
+    "Zustand": {
+      "linesOfCode": 359,
+      "totalLines": 413,
+      "blankLines": 38,
+      "commentLines": 16,
+      "files": 1,
+      "lastUpdated": "2025-11-03T21:46:08.225Z"
+    }
+  }
+}

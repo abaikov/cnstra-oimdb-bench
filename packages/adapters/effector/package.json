@@ -3,11 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.tsx",
+  "module": "src/index.tsx",
+  "types": "src/index.tsx",
   "files": ["dist"],
   "scripts": {"build": "tsc -p tsconfig.build.json"},
-  "devDependencies": {"typescript": "^5.5.4"},
+  "dependencies": {
+    "effector": "^23.0.0",
+    "effector-react": "^23.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/react": "^18.2.21"
+  },
   "peerDependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"}
 }

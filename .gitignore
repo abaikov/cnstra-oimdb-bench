@@ -142,7 +142,13 @@ vite.config.ts.timestamp-*
 **/src/**/*.js
 **/src/**/*.d.ts
 
+bench-results/
+
 
 # nx cache
 .nx
+
+# IDE
 .claude/
+.cursor/
+.vscode/

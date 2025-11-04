@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/adapters/cnstra-oimdb" },
+    { "path": "packages/adapters/redux" },
+    { "path": "packages/adapters/zustand" },
+    { "path": "packages/adapters/effector" },
+    { "path": "packages/adapters/placeholder" },
+    { "path": "apps/bench" }
+  ]
+}
+

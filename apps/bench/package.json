@@ -13,10 +13,21 @@
     "react-dom": "^18.2.0",
     "react-window": "^1.8.10",
     "seedrandom": "^3.0.5",
+    "@reduxjs/toolkit": "^2.0.1",
+    "react-redux": "^9.0.4",
+    "effector": "^23.0.0",
+    "effector-react": "^23.0.0",
+    "zustand": "^4.5.2",
+    "@cnstra/core": "1.7.0",
+    "@cnstra/react": "1.0.1",
+    "@oimdb/core": "1.0.6",
+    "@oimdb/react": "1.1.0",
     "@bench/core": "0.1.0",
     "@bench/adapter-placeholder": "0.1.0",
     "@bench/adapter-cnstra-oimdb": "0.1.0",
-    "@bench/adapter-redux": "0.1.0"
+    "@bench/adapter-redux": "0.1.0",
+    "@bench/adapter-effector": "0.1.0",
+    "@bench/adapter-zustand": "0.1.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.21",

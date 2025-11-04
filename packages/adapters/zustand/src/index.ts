@@ -1,208 +1,412 @@
 import React, { createContext, useContext } from 'react';
-import { createStore as createZustandStore } from 'zustand/vanilla';
+import { createStore as createZustandStore, type StoreApi } from 'zustand/vanilla';
 import { useStore as useZustand } from 'zustand';
-import type { StoreAdapter, StoreHandle } from '@bench/core';
-import type { RootState, ID, Deck, Card, Comment, User } from '@bench/core';
+import type { StoreAdapter, StoreHandle, ViewModelHooksIdsBased } from '@bench/core';
+import type {
+    RootState,
+    ID,
+    Deck,
+    Card,
+    Comment,
+    User,
+    Tag,
+    CardTag,
+    CardAssignment,
+} from '@bench/core';
 
-type ZStore = ReturnType<typeof createZustandStore<RootState>>;
+// Extended entity types for Zustand store
+type DeckWithCardIds = Deck & { cardIds: ID[] };
+type CardWithIndexes = Card & {
+    commentIds: ID[];
+    userIds: ID[];
+    cardTagIds: ID[];
+    tagIds: ID[];
+};
+
+type ZustandState = Omit<RootState, 'entities'> & {
+    entities: {
+        users: Record<ID, User>;
+        comments: Record<ID, Comment>;
+        cards: Record<ID, CardWithIndexes>;
+        decks: Record<ID, DeckWithCardIds>;
+        tags: Record<ID, Tag>;
+        cardAssignments: Record<ID, CardAssignment>;
+        cardTags: Record<ID, CardTag>;
+    };
+};
+
+type ZStore = StoreApi<ZustandState>;
 
 const Ctx = createContext<ZStore | null>(null);
 
-const Provider: React.FC<{ store: StoreHandle; children?: React.ReactNode }> = ({ store, children }) => {
-  return React.createElement(Ctx.Provider, { value: store as ZStore }, children);
-};
+const Provider: React.FC<{ store: StoreHandle; children?: React.ReactNode }> = ({
+    store,
+    children,
+}) => React.createElement(Ctx.Provider, { value: store as ZStore }, children);
 
 function useZStore(): ZStore {
-  const s = useContext(Ctx);
-  if (!s) throw new Error('Zustand store not found');
-  return s;
-}
-
-function shallowEqualIds(a: { id: string }[] | undefined, b: { id: string }[] | undefined): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if ((a[i] as any).id !== (b[i] as any).id) return false;
-  return true;
+    const s = useContext(Ctx);
+    if (!s) throw new Error('Zustand store not found');
+    return s;
 }
 
 function shallowEqualStrings(a: string[] | undefined, b: string[] | undefined): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+    if (a === b) return true;
+    if (!a || !b) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
 }
 
-const hooks = {
-  useDeckIds(): ID[] {
-    const store = useZStore();
-    return useZustand(store, (s) => s.decksOrder, shallowEqualStrings);
-  },
+// Helper to build extended entities with indexes from RootState
+function buildExtendedEntities(initialData: RootState): ZustandState['entities'] {
+    // Build cardIdsByDeckId first
+    const cardIdsByDeckId: Record<ID, ID[]> = {};
+    for (const card of Object.values(initialData.entities.cards)) {
+        if (!cardIdsByDeckId[card.deckId]) {
+            cardIdsByDeckId[card.deckId] = [];
+        }
+        cardIdsByDeckId[card.deckId].push(card.id);
+    }
 
-  useDeckById(id: ID): Deck | undefined {
-    const store = useZStore();
-    return useZustand(store, (s) => s.entities.decks[id]);
-  },
+    // Build commentIdsByCardId
+    const commentIdsByCardId: Record<ID, ID[]> = {};
+    for (const comment of Object.values(initialData.entities.comments)) {
+        if (!commentIdsByCardId[comment.cardId]) {
+            commentIdsByCardId[comment.cardId] = [];
+        }
+        commentIdsByCardId[comment.cardId].push(comment.id);
+    }
 
-  useCardById(id: ID): Card | undefined {
-    const store = useZStore();
-    return useZustand(store, (s) => s.entities.cards[id]);
-  },
+    // Build userIdsByCardId
+    const userIdsByCardId: Record<ID, ID[]> = {};
+    const seenUserIdsByCard = new Map<ID, Set<ID>>();
+    for (const assignment of Object.values(initialData.entities.cardAssignments)) {
+        const userId = assignment.userId;
+        const cardId = assignment.cardId;
+        if (userId && initialData.entities.users[userId]) {
+            if (!seenUserIdsByCard.has(cardId)) {
+                seenUserIdsByCard.set(cardId, new Set());
+            }
+            if (!seenUserIdsByCard.get(cardId)!.has(userId)) {
+                seenUserIdsByCard.get(cardId)!.add(userId);
+                if (!userIdsByCardId[cardId]) {
+                    userIdsByCardId[cardId] = [];
+                }
+                userIdsByCardId[cardId].push(userId);
+            }
+        }
+    }
 
-  useCardsByDeckId(deckId: ID): Card[] {
-    const store = useZStore();
-    return useZustand(
-      store,
-      (s) => Object.values(s.entities.cards).filter((c) => c.deckId === deckId),
-      (a, b) => shallowEqualIds((a as any) ?? [], (b as any) ?? [])
-    );
-  },
+    // Build cardTagIdsByCardId and tagIdsByCardId
+    const cardTagIdsByCardId: Record<ID, ID[]> = {};
+    const tagIdsByCardId: Record<ID, ID[]> = {};
+    const seenTagIdsByCard = new Map<ID, Set<ID>>();
+    for (const cardTag of Object.values(initialData.entities.cardTags)) {
+        if (!cardTagIdsByCardId[cardTag.cardId]) {
+            cardTagIdsByCardId[cardTag.cardId] = [];
+        }
+        cardTagIdsByCardId[cardTag.cardId].push(cardTag.id);
 
-  useAssigneesByCardId(cardId: ID): User[] {
-    const store = useZStore();
-    return useZustand(
-      store,
-      (s) => {
-        const assignments = Object.values(s.entities.cardAssignments).filter((a) => a.cardId === cardId);
-        const users = assignments.map((a) => s.entities.users[a.userId]).filter(Boolean) as User[];
-        return users;
-      },
-      (a, b) => shallowEqualIds((a as any) ?? [], (b as any) ?? [])
-    );
-  },
+        const tagId = cardTag.tagId;
+        const cardId = cardTag.cardId;
+        if (tagId && initialData.entities.tags[tagId]) {
+            if (!seenTagIdsByCard.has(cardId)) {
+                seenTagIdsByCard.set(cardId, new Set());
+            }
+            if (!seenTagIdsByCard.get(cardId)!.has(tagId)) {
+                seenTagIdsByCard.get(cardId)!.add(tagId);
+                if (!tagIdsByCardId[cardId]) {
+                    tagIdsByCardId[cardId] = [];
+                }
+                tagIdsByCardId[cardId].push(tagId);
+            }
+        }
+    }
 
-  useTagsByCardId(cardId: ID): string[] {
-    const store = useZStore();
-    return useZustand(
-      store,
-      (s) => {
-        const cardTags = Object.values(s.entities.cardTags).filter((ct) => ct.cardId === cardId);
-        return cardTags.map((ct) => ct.tagId);
-      },
-      shallowEqualStrings
-    );
-  },
+    // Build extended decks with cardIds
+    const decks: Record<ID, DeckWithCardIds> = {};
+    for (const deck of Object.values(initialData.entities.decks)) {
+        decks[deck.id] = {
+            ...deck,
+            cardIds: cardIdsByDeckId[deck.id] || [],
+        };
+    }
 
-  useCommentById(id: ID): Comment | undefined {
-    const store = useZStore();
-    return useZustand(store, (s) => s.entities.comments[id]);
-  },
+    // Build extended cards with indexes
+    const cards: Record<ID, CardWithIndexes> = {};
+    for (const card of Object.values(initialData.entities.cards)) {
+        cards[card.id] = {
+            ...card,
+            commentIds: commentIdsByCardId[card.id] || [],
+            userIds: userIdsByCardId[card.id] || [],
+            cardTagIds: cardTagIdsByCardId[card.id] || [],
+            tagIds: tagIdsByCardId[card.id] || [],
+        };
+    }
 
-  useCommentsByCardId(cardId: ID): Comment[] {
-    const store = useZStore();
-    return useZustand(
-      store,
-      (s) => Object.values(s.entities.comments).filter((c) => c.cardId === cardId),
-      (a, b) => shallowEqualIds((a as any) ?? [], (b as any) ?? [])
-    );
-  },
+    return {
+        users: initialData.entities.users,
+        comments: initialData.entities.comments,
+        cards,
+        decks,
+        tags: initialData.entities.tags,
+        cardAssignments: initialData.entities.cardAssignments,
+        cardTags: initialData.entities.cardTags,
+    };
+}
 
-  useUserById(id: ID): User | undefined {
-    const store = useZStore();
-    return useZustand(store, (s) => s.entities.users[id]);
-  },
+function createHooks(): ViewModelHooksIdsBased {
+    return {
+        useDeckIds(): ID[] {
+            const store = useZStore();
+            return useZustand(store, (s: ZustandState) => s.decksOrder, shallowEqualStrings);
+        },
 
-  useActiveDeckId(): ID | null {
-    const store = useZStore();
-    return useZustand(store, (s) => s.activeDeckId);
-  },
-};
+        useDeckById(id: ID): Deck | undefined {
+            const store = useZStore();
+            // Return deck object directly from store (DeckWithCardIds extends Deck)
+            // to preserve reference equality and avoid unnecessary re-renders
+            return useZustand(store, (s: ZustandState) => s.entities.decks[id]);
+        },
+
+        useCardById(id: ID): Card | undefined {
+            const store = useZStore();
+            // Return card object directly from store (CardWithIndexes extends Card)
+            // to preserve reference equality and avoid unnecessary re-renders
+            return useZustand(store, (s: ZustandState) => s.entities.cards[id]);
+        },
+
+        useCommentById(id: ID): Comment | undefined {
+            const store = useZStore();
+            return useZustand(store, (s: ZustandState) => s.entities.comments[id]);
+        },
+
+        useUserById(id: ID): User | undefined {
+            const store = useZStore();
+            return useZustand(store, (s: ZustandState) => s.entities.users[id]);
+        },
+
+        useActiveDeckId(): ID | null {
+            const store = useZStore();
+            return useZustand(store, (s: ZustandState) => s.activeDeckId);
+        },
+        useCardIdsByDeckId(deckId: ID): ID[] {
+            const store = useZStore();
+            return useZustand(
+                store,
+                (s: ZustandState) => s.entities.decks[deckId]?.cardIds ?? [],
+                shallowEqualStrings,
+            );
+        },
+        useCommentIdsByCardId(cardId: ID): ID[] {
+            const store = useZStore();
+            return useZustand(
+                store,
+                (s: ZustandState) => s.entities.cards[cardId]?.commentIds ?? [],
+                shallowEqualStrings,
+            );
+        },
+        useAssigneeIdsByCardId(cardId: ID): ID[] {
+            const store = useZStore();
+            return useZustand(
+                store,
+                (s: ZustandState) => s.entities.cards[cardId]?.userIds ?? [],
+                shallowEqualStrings,
+            );
+        },
+        useTagIdsByCardId(cardId: ID): ID[] {
+            const store = useZStore();
+            return useZustand(
+                store,
+                (s: ZustandState) => s.entities.cards[cardId]?.tagIds ?? [],
+                shallowEqualStrings,
+            );
+        },
+    };
+}
 
 const actions = (store: ZStore) => ({
-  setActiveDeck(id: ID) {
-    store.setState((s) => ({ ...s, activeDeckId: id }));
-  },
+    setActiveDeck(id: ID) {
+        store.setState((s) => ({ ...s, activeDeckId: id }));
+    },
 
-  updateCommentText(commentId: ID, text: string) {
-    store.setState((s) => {
-      const existing = s.entities.comments[commentId];
-      if (!existing) return s;
-      return {
-        ...s,
-        entities: {
-          ...s.entities,
-          comments: { ...s.entities.comments, [commentId]: { ...existing, text } },
-        },
-      };
-    });
-  },
+    updateCard(cardId: ID, changes: Partial<Card>) {
+        store.setState((s) => {
+            const existing = s.entities.cards[cardId];
+            if (!existing) return s;
+            return {
+                ...s,
+                entities: {
+                    ...s.entities,
+                    cards: { ...s.entities.cards, [cardId]: { ...existing, ...changes } },
+                },
+            };
+        });
+    },
 
-  renameUser(userId: ID, name: string) {
-    store.setState((s) => {
-      const user = s.entities.users[userId];
-      if (!user) return s;
-      return {
-        ...s,
-        entities: {
-          ...s.entities,
-          users: { ...s.entities.users, [userId]: { ...user, name } },
-        },
-      };
-    });
-  },
+    updateCommentText(commentId: ID, text: string) {
+        store.setState((s) => {
+            const existing = s.entities.comments[commentId];
+            if (!existing) return s;
+            return {
+                ...s,
+                entities: {
+                    ...s.entities,
+                    comments: { ...s.entities.comments, [commentId]: { ...existing, text } },
+                },
+            };
+        });
+    },
 
-  setCommentEditing(commentId: ID, isEditing: boolean) {
-    store.setState((s) => {
-      const existing = s.entities.comments[commentId];
-      if (!existing) return s;
-      return {
-        ...s,
-        entities: {
-          ...s.entities,
-          comments: { ...s.entities.comments, [commentId]: { ...existing, isEditing } as any },
-        },
-      };
-    });
-  },
+    renameUser(userId: ID, name: string) {
+        store.setState((s) => {
+            const user = s.entities.users[userId];
+            if (!user) return s;
+            return {
+                ...s,
+                entities: {
+                    ...s.entities,
+                    users: { ...s.entities.users, [userId]: { ...user, name } },
+                },
+            };
+        });
+    },
 
-  bulkToggleTagOnCards(cardIds: ID[], tagId: ID) {
-    store.setState((s) => {
-      const cardTags = { ...s.entities.cardTags };
-      let counter = Object.keys(cardTags).length;
-      for (const cardId of cardIds) {
-        const existing = Object.values(cardTags).find((ct) => ct.cardId === cardId && ct.tagId === tagId);
-        if (existing) {
-          delete cardTags[existing.id];
-        } else {
-          const newId = `cardtag_${counter++}`;
-          cardTags[newId] = { id: newId, cardId, tagId, createdAt: Date.now() } as any;
-        }
-      }
-      return { ...s, entities: { ...s.entities, cardTags } };
-    });
-  },
+    setCommentEditing(commentId: ID, isEditing: boolean) {
+        store.setState((s) => {
+            const existing = s.entities.comments[commentId];
+            if (!existing) return s;
+            return {
+                ...s,
+                entities: {
+                    ...s.entities,
+                    comments: {
+                        ...s.entities.comments,
+                        [commentId]: { ...existing, isEditing } as Comment,
+                    },
+                },
+            };
+        });
+    },
 
-  backgroundChurnStart() {
-    store.setState((s) => {
-      const cards = { ...s.entities.cards };
-      let i = 0;
-      for (const id of Object.keys(cards)) {
-        if (i++ >= 100) break;
-        const c = cards[id]!;
-        cards[id] = { ...c, updatedAt: Date.now() };
-      }
-      return { ...s, entities: { ...s.entities, cards } };
-    });
-  },
+    bulkToggleTagOnCards(cardIds: ID[], tagId: ID) {
+        store.setState((s) => {
+            const cardTags = { ...s.entities.cardTags };
+            let counter = Object.keys(cardTags).length;
+            // Create a map for O(1) lookup: (cardId, tagId) -> CardTag
+            const tagMap = new Map<string, CardTag>();
+            for (const id in cardTags) {
+                const ct = cardTags[id];
+                if (ct) {
+                    tagMap.set(`${ct.cardId}:${ct.tagId}`, ct);
+                }
+            }
 
-  backgroundChurnStop() {
-    // noop for zustand
-  },
+            const affectedCardIds = new Set<ID>();
+            const toRemove: string[] = [];
+            const toAdd: CardTag[] = [];
+
+            for (const cardId of cardIds) {
+                const key = `${cardId}:${tagId}`;
+                const existing = tagMap.get(key);
+                if (existing) {
+                    toRemove.push(existing.id);
+                    delete cardTags[existing.id];
+                    tagMap.delete(key);
+                } else {
+                    const newId = `cardtag_${counter++}`;
+                    const newTag: CardTag = {
+                        id: newId,
+                        cardId,
+                        tagId,
+                        createdAt: Date.now(),
+                    };
+                    cardTags[newId] = newTag;
+                    tagMap.set(key, newTag);
+                    toAdd.push(newTag);
+                }
+                affectedCardIds.add(cardId);
+            }
+
+            // Rebuild tagIds and cardTagIds for affected cards - update them directly in card objects
+            const cards = { ...s.entities.cards };
+            for (const cardId of affectedCardIds) {
+                const seenTagIds = new Set<ID>();
+                const tagIds: ID[] = [];
+                const cardTagIds: ID[] = [];
+
+                // Get all cardTags for this card (from updated cardTags)
+                for (const cardTagId in cardTags) {
+                    const cardTag = cardTags[cardTagId];
+                    if (
+                        cardTag &&
+                        cardTag.cardId === cardId &&
+                        cardTag.tagId &&
+                        s.entities.tags[cardTag.tagId]
+                    ) {
+                        if (!seenTagIds.has(cardTag.tagId)) {
+                            seenTagIds.add(cardTag.tagId);
+                            tagIds.push(cardTag.tagId);
+                        }
+                        cardTagIds.push(cardTag.id);
+                    }
+                }
+
+                // Update card with new tagIds and cardTagIds
+                const existingCard = cards[cardId];
+                if (existingCard) {
+                    cards[cardId] = {
+                        ...existingCard,
+                        tagIds,
+                        cardTagIds,
+                    };
+                }
+            }
+
+            return {
+                ...s,
+                entities: { ...s.entities, cardTags, cards },
+            };
+        });
+    },
+
+    backgroundChurnStart() {
+        store.setState((s) => {
+            const cards = { ...s.entities.cards };
+            let count = 0;
+            for (const id in cards) {
+                if (count >= 100) break;
+                cards[id] = { ...cards[id]!, updatedAt: Date.now() };
+                count++;
+            }
+            return { ...s, entities: { ...s.entities, cards } };
+        });
+    },
+    backgroundChurnStop() {},
 });
 
-export const zustandAdapter: StoreAdapter = {
-  name: 'Zustand',
-  createStore(initial: RootState) {
-    return createZustandStore<RootState>(() => initial);
-  },
-  Provider,
-  get hooks() {
-    return hooks;
-  },
-  bindActions(storeHandle: StoreHandle) {
-    return actions(storeHandle as ZStore);
-  },
-};
+function createZustandAdapter(): StoreAdapter {
+    return {
+        name: 'Zustand (ids-based)',
+        createStore(initial: RootState) {
+            const entities = buildExtendedEntities(initial);
+            return createZustandStore<ZustandState>(() => ({
+                entities,
+                decksOrder: initial.decksOrder,
+                activeDeckId: initial.activeDeckId,
+            }));
+        },
+        Provider,
+        get hooks() {
+            return createHooks();
+        },
+        bindActions(storeHandle: StoreHandle) {
+            return actions(storeHandle as ZStore);
+        },
+    };
+}
+
+export const zustandAdapter = createZustandAdapter();
 
 export default zustandAdapter;
