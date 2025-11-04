@@ -47,14 +47,16 @@ Open your browser to `http://localhost:5173` to start benchmarking.
 - **FPS**: Frame rate during updates
 - **Latency**: P50, P95, and P99 latency percentiles
 
+## 📰 Benchmark Results
+
+Read the detailed results and architectural analysis in [BENCHMARK_RESULTS.md](./BENCHMARK_RESULTS.md).
+
 ## 🎯 Supported State Managers
 
 - **Cnstra + Oimdb**: Reactive collections with CNS
 - **Redux Toolkit**: Official Redux toolkit
 - **Effector**: Reactive state management
-- **MobX**: Observable state
 - **Zustand**: Lightweight state management
-- **React State**: Pure React useState/Context
 
 ## 🔧 Development
 
@@ -76,7 +78,15 @@ npm run preview
 
 ## 📝 Benchmarking Guidelines
 
-See [BENCHMARKING.md](./BENCHMARKING.md) for detailed guidelines on how benchmarks are configured and what best practices are followed for each library.
+- Scenarios are defined in `packages/core/src/workloads.ts`.
+- Metrics and scoring live in `packages/core/src/metrics.ts`.
+- Adapters are in `packages/adapters/*` and `packages/core/src/adapter.ts`.
+
+To run full automated benchmarks and produce a summary:
+```bash
+npm run bench          # runs local server + automated runs
+npm run bench:summary  # creates summary from latest JSONs
+```
 
 ## 🎨 Features
 

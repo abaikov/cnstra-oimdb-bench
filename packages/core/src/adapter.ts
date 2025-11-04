@@ -26,6 +26,7 @@ export type ViewModelHooksIdsBased = {
     useAssigneeIdsByCardId(cardId: ID): ID[];
     useTagIdsByCardId(cardId: ID): ID[];
     useActiveDeckId(): ID | null;
+    useCardVisibility(cardId: ID): boolean;
 };
 
 export type ViewModelHooks = ViewModelHooksIdsBased;
@@ -39,6 +40,7 @@ export type Actions = {
     bulkToggleTagOnCards(cardIds: ID[], tagId: ID): void;
     backgroundChurnStart(): void;
     backgroundChurnStop(): void;
+    setCardVisibility(cardId: ID, isVisible: boolean): void;
 };
 
 export type StoreAdapter = {

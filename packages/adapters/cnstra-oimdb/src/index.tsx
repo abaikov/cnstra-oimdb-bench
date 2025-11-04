@@ -144,6 +144,7 @@ function createCnstraOimdbStore(initialData: RootState) {
         renameUser: collateral<{ id: ID; name: string }>('renameUser'),
         bulkTag: collateral<{ cardIds: ID[]; tagId: ID }>('bulkToggleTag'),
         churn: collateral<boolean>('backgroundChurn'),
+        setCardVisibility: collateral<{ cardId: ID; isVisible: boolean }>('setCardVisibility'),
     };
 
     const cns = new CNS([
@@ -261,10 +262,31 @@ function createCnstraOimdbStore(initialData: RootState) {
                         queue.flush();
                     }
                 },
+            })
+            .dendrite({
+                collateral: collaterals.setCardVisibility,
+                response: (payload: { cardId: ID; isVisible: boolean }) => {
+                    const existing = collections.cards.getOneByPk(payload.cardId) as
+                        | Card
+                        | undefined;
+                    if (!existing) return;
+                    if (existing.isVisible === payload.isVisible) return;
+                    collections.cards.upsertOne({
+                        id: existing.id,
+                        isVisible: payload.isVisible,
+                    } as Card);
+                    queue.flush();
+                },
             }),
     ]);
 
-    return { cns, collections, decksOrder: initialData.decksOrder, queue, collaterals };
+    return {
+        cns,
+        collections,
+        decksOrder: initialData.decksOrder,
+        queue,
+        collaterals,
+    };
 }
 
 type CnstraOimdbStore = ReturnType<typeof createCnstraOimdbStore>;
@@ -287,8 +309,6 @@ const CnstraOimdbProvider: React.FC<CnstraOimdbProviderProps> = ({
         </CnstraStoreContext.Provider>
     );
 };
-const EMPTY_ARRAY: any[] = [];
-
 function createHooks(): ViewModelHooksIdsBased {
     return {
         useDeckIds(): ID[] {
@@ -332,6 +352,11 @@ function createHooks(): ViewModelHooksIdsBased {
             const { cardTags } = useOIMCollectionsContext();
             return useSelectPksByIndexKey(cardTags.indexes.byCard, cardId) as ID[];
         },
+        useCardVisibility(cardId: ID): boolean {
+            const { cards } = useOIMCollectionsContext();
+            const card = useSelectEntityByPk(cards, cardId) as Card | undefined;
+            return card?.isVisible ?? false;
+        },
     };
 }
 
@@ -361,6 +386,11 @@ const actions = (store: CnstraOimdbStore) => ({
     },
     backgroundChurnStop() {
         store.cns.stimulate(store.collaterals.churn.createSignal(false));
+    },
+    setCardVisibility(cardId: ID, isVisible: boolean) {
+        store.cns.stimulate(
+            store.collaterals.setCardVisibility.createSignal({ cardId, isVisible }),
+        );
     },
 });
 

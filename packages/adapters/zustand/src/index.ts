@@ -223,6 +223,13 @@ function createHooks(): ViewModelHooksIdsBased {
                 shallowEqualStrings,
             );
         },
+        useCardVisibility(cardId: ID): boolean {
+            const store = useZStore();
+            return useZustand(
+                store,
+                (s: ZustandState) => s.entities.cards[cardId]?.isVisible ?? false,
+            );
+        },
     };
 }
 
@@ -384,6 +391,20 @@ const actions = (store: ZStore) => ({
         });
     },
     backgroundChurnStop() {},
+    setCardVisibility(cardId: ID, isVisible: boolean) {
+        store.setState((s) => {
+            const existing = s.entities.cards[cardId];
+            if (!existing) return s;
+            if (existing.isVisible === isVisible) return s;
+            return {
+                ...s,
+                entities: {
+                    ...s.entities,
+                    cards: { ...s.entities.cards, [cardId]: { ...existing, isVisible } },
+                },
+            };
+        });
+    },
 });
 
 function createZustandAdapter(): StoreAdapter {

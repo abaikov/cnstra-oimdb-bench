@@ -96,24 +96,36 @@ async function measureMemoryMedian(samples: number = 3, delayMs: number = 5): Pr
 
 /**
  * Wait for React to flush updates and paint to complete
+ * Uses multiple microtask flushes and RAFs to ensure all React updates, effects, and paints are complete
  */
 async function waitForPaintCompletion(doubleRaf: boolean = true): Promise<number> {
     const waitStart = performance.now();
     await new Promise<void>((resolve) => {
-        // Microtask ensures all React updates are flushed synchronously
+        // First microtask flush - ensures all synchronous React updates are queued
         Promise.resolve().then(() => {
-            if (doubleRaf) {
-                // Double RAF to ensure paint is complete
-                requestAnimationFrame(() => {
+            // Second microtask flush - ensures all effects and callbacks are processed
+            Promise.resolve().then(() => {
+                if (doubleRaf) {
+                    // Double RAF to ensure paint is complete
+                    // First RAF: React has scheduled the update
                     requestAnimationFrame(() => {
-                        resolve();
+                        // Second RAF: Browser has painted the update
+                        requestAnimationFrame(() => {
+                            // Final microtask flush to catch any post-paint effects
+                            Promise.resolve().then(() => {
+                                resolve();
+                            });
+                        });
                     });
-                });
-            } else {
-                requestAnimationFrame(() => {
-                    resolve();
-                });
-            }
+                } else {
+                    // Single RAF for non-paint waits
+                    requestAnimationFrame(() => {
+                        Promise.resolve().then(() => {
+                            resolve();
+                        });
+                    });
+                }
+            });
         });
     });
     return performance.now() - waitStart;
@@ -287,8 +299,17 @@ export function createBenchmarkRunner<A extends object = any>(
 
                 // Execute workload - render counter is set via global variable so useCounterKey can access it
                 // Use unique key per run to avoid race conditions
-                const benchmarkCounterKey = `__benchmarkRenderCounter_${Date.now()}_${i}_${Math.random()}`;
-                (window as any)[benchmarkCounterKey] = runRenderCounter;
+                // Use timestamp + run index + random for uniqueness, but also clean up old keys first
+                const windowAny = window as any;
+                const oldCounterKeys = Object.keys(windowAny).filter((key) =>
+                    key.startsWith('__benchmarkRenderCounter_'),
+                );
+                for (const key of oldCounterKeys) {
+                    delete windowAny[key];
+                }
+
+                const benchmarkCounterKey = `__benchmarkRenderCounter_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`;
+                windowAny[benchmarkCounterKey] = runRenderCounter;
 
                 let measuredFps = 0;
                 let fpsStopped = false;
@@ -305,7 +326,7 @@ export function createBenchmarkRunner<A extends object = any>(
                         }
                     }
                     // Clean up counter reference
-                    delete (window as any)[benchmarkCounterKey];
+                    delete windowAny[benchmarkCounterKey];
                 }
 
                 // Wait for React to finish rendering all updates before measuring

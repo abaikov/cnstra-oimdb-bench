@@ -141,6 +141,7 @@ function createEffectorStore(initialData: RootState) {
     const bulkToggleTagEvent = createEvent<{ cardIds: ID[]; tagId: ID }>();
     const updateCardEvent = createEvent<{ id: ID; changes: Partial<Card> }>();
     const bulkUpdateCardsEvent = createEvent<Array<{ id: ID; changes: Partial<Card> }>>();
+    const setCardVisibilityEvent = createEvent<{ cardId: ID; isVisible: boolean }>();
 
     // Reducers
     $activeDeckId.on(setActiveDeckEvent, (_, id) => id);
@@ -162,6 +163,13 @@ function createEffectorStore(initialData: RootState) {
         const existing = users[id];
         if (existing && existing.name === name) return users;
         return { ...users, [id]: { ...existing, id, name } as User };
+    });
+
+    $cards.on(setCardVisibilityEvent, (cards, { cardId, isVisible }) => {
+        const existing = cards[cardId];
+        if (!existing) return cards;
+        if (existing.isVisible === isVisible) return cards;
+        return { ...cards, [cardId]: { ...existing, isVisible } as CardWithIndexes };
     });
 
     $cards.on(updateCardEvent, (cards, { id, changes }) => {
@@ -449,6 +457,7 @@ function createEffectorStore(initialData: RootState) {
             bulkToggleTag: bulkToggleTagEvent,
             updateCard: updateCardEvent,
             bulkUpdateCards: bulkUpdateCardsEvent,
+            setCardVisibility: setCardVisibilityEvent,
         },
     };
 }
@@ -561,6 +570,14 @@ function createHooks(): ViewModelHooksIdsBased {
                 },
             });
         },
+        useCardVisibility(cardId: ID): boolean {
+            const store = useContext(EffectorStoreContext)!;
+            return useStoreMap({
+                store: store.stores.cardsView,
+                keys: [cardId],
+                fn: (cards, [id]) => cards[id]?.isVisible ?? false,
+            });
+        },
     };
 }
 
@@ -603,6 +620,9 @@ const actions = (store: EffectorStore) => ({
         }
     },
     backgroundChurnStop() {},
+    setCardVisibility(cardId: ID, isVisible: boolean) {
+        store.events.setCardVisibility({ cardId, isVisible });
+    },
 });
 
 function createEffectorAdapter(): StoreAdapter {

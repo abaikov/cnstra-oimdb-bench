@@ -18,12 +18,19 @@ import { createBenchmarkRunner, calculateMedian } from './benchmarkRunner';
 
 const AdapterContext = createContext<{ adapter: StoreAdapter; actions: any } | null>(null);
 
+// Intersection Observer Context for tracking card visibility
+type ObserverCallbacks = {
+    observe: (element: HTMLElement, cardId: string) => void;
+    unobserve: (element: HTMLElement) => void;
+};
+const IntersectionObserverContext = createContext<ObserverCallbacks | null>(null);
+
 // All components use ids-based mode
 
 // Create adapters - only ids-based versions
 const adapters: StoreAdapter[] = [
-    effectorAdapter,
     cnstraOimdbAdapter,
+    effectorAdapter,
     reduxAdapter,
     zustandAdapter,
 ].filter(Boolean) as StoreAdapter[];
@@ -142,9 +149,23 @@ const CardItemBase: React.FC<{ cardId: string }> = ({ cardId }) => {
     useCounterKey('CardItem');
     const ctx = useContext(AdapterContext);
     if (!ctx) throw new Error('Adapter context not found');
+    const observerCtx = useContext(IntersectionObserverContext);
 
     const card = ctx.adapter.hooks.useCardById(cardId) as Card | undefined;
     const commentIds = ctx.adapter.hooks.useCommentIdsByCardId(cardId) as ID[];
+    const isVisible = ctx.adapter.hooks.useCardVisibility(cardId);
+
+    const cardRef = React.useRef<HTMLDivElement>(null);
+
+    // Register/unregister with Intersection Observer
+    React.useEffect(() => {
+        if (!observerCtx || !cardRef.current) return;
+        const element = cardRef.current;
+        observerCtx.observe(element, cardId);
+        return () => {
+            observerCtx.unobserve(element);
+        };
+    }, [observerCtx, cardId]);
 
     if (!card) return <div>Loading card...</div>;
     // Read updatedAt to ensure UI depends on the field mutated in bulk updates
@@ -152,11 +173,27 @@ const CardItemBase: React.FC<{ cardId: string }> = ({ cardId }) => {
 
     return (
         <div
+            ref={cardRef}
+            data-card-id={cardId}
             style={styles.cardItemStyles.container}
             onMouseEnter={styles.hoverHandlers.cardItem.onEnter}
             onMouseLeave={styles.hoverHandlers.cardItem.onLeave}
         >
-            <div style={styles.cardItemStyles.title}>{card.title}</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={styles.cardItemStyles.title}>{card.title}</div>
+                {isVisible && (
+                    <span
+                        style={{
+                            fontSize: '16px',
+                            marginLeft: '8px',
+                            opacity: 0.7,
+                        }}
+                        title="Card is visible on screen"
+                    >
+                        👁️
+                    </span>
+                )}
+            </div>
             <div style={styles.cardItemStyles.description}>{card.description}</div>
             <div style={styles.cardItemStyles.commentsHeader}>
                 <div style={styles.cardItemStyles.commentsTitle}>
@@ -387,11 +424,13 @@ const InfoBanner: React.FC = () => {
                             ✏️ Try It Yourself:
                         </strong>
                         <div style={{ lineHeight: 1.8 }}>
-                            Click the <strong>"✏️ Edit"</strong> button next to any comment in the
-                            cards and try to quickly edit the text. You'll notice that some state
-                            managers show noticeable lag during fast input, while others work
-                            smoothly. <strong>This is a real reactivity test</strong> - switch
-                            between different state managers and compare!
+                            Try scrolling through the cards - you'll see an eye icon (👁️) appear
+                            when cards become visible on screen. Notice how quickly the icon updates
+                            as you scroll: some state managers react instantly while others show
+                            noticeable lag. While comment editing is generally smooth,{' '}
+                            <strong>scrolling reveals the real reactivity differences</strong>{' '}
+                            between state managers - switch between adapters and compare the
+                            responsiveness!
                         </div>
                     </div>
                 </div>
@@ -486,9 +525,9 @@ export const App: React.FC = () => {
         () =>
             generateDataset({
                 decks: 50,
-                cardsPerDeck: 10,
-                minCommentsPerCard: 3,
-                maxCommentsPerCard: 5,
+                cardsPerDeck: 30,
+                minCommentsPerCard: 2,
+                maxCommentsPerCard: 2,
                 users: 2000,
                 tags: 50,
                 seed: 42,
@@ -529,6 +568,53 @@ export const App: React.FC = () => {
     const store = useMemo(() => adapter.createStore(dataset), [adapter, dataset]);
     const actions = useMemo(() => adapter.bindActions(store), [adapter, store]);
 
+    // Create Intersection Observer for tracking card visibility
+    // Use a ref to track if benchmark is running - this prevents observer from interfering with benchmarks
+    const isBenchmarkRunningRef = React.useRef(false);
+
+    const observerCallbacks = useMemo(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                // Skip updates during benchmarks to prevent interference with measurements
+                if (isBenchmarkRunningRef.current) {
+                    return;
+                }
+
+                for (const entry of entries) {
+                    const element = entry.target as HTMLElement;
+                    const cardId = element.dataset.cardId;
+                    if (cardId) {
+                        const isVisible = entry.isIntersecting;
+                        actions.setCardVisibility(cardId, isVisible);
+                    }
+                }
+            },
+            {
+                root: null, // viewport
+                rootMargin: '0px',
+                threshold: 0.1, // Trigger when 10% of card is visible
+            },
+        );
+
+        return {
+            observe: (element: HTMLElement, cardId: string) => {
+                element.dataset.cardId = cardId;
+                observer.observe(element);
+            },
+            unobserve: (element: HTMLElement) => {
+                observer.unobserve(element);
+                delete element.dataset.cardId;
+            },
+        };
+    }, [actions]);
+
+    // Cleanup observer on unmount
+    useEffect(() => {
+        return () => {
+            // Observer will be cleaned up automatically when component unmounts
+        };
+    }, []);
+
     // Expose window API for Puppeteer automation
     useEffect(() => {
         // Set ready flag when app is mounted
@@ -559,18 +645,27 @@ export const App: React.FC = () => {
                     // Only switch if different from current adapter to avoid unnecessary overhead
                     if (idx !== adapterIndex) {
                         setAdapterIndex(idx);
-                        // Wait for React to fully update - use RAF chain to ensure renders complete
+                        // Wait for React to fully update - use multiple RAFs and microtask queue flush
+                        // This ensures all state updates, re-renders, and effects are complete
                         await new Promise((resolve) => {
+                            // Flush microtask queue first
                             Promise.resolve().then(() => {
+                                // Then wait for multiple animation frames to ensure all renders complete
                                 requestAnimationFrame(() => {
                                     requestAnimationFrame(() => {
-                                        setTimeout(resolve, 150); // Longer wait for full stabilization
+                                        // One more microtask flush to catch any effects
+                                        Promise.resolve().then(() => {
+                                            requestAnimationFrame(() => {
+                                                // Final wait to ensure everything is stable
+                                                setTimeout(resolve, 200);
+                                            });
+                                        });
                                     });
                                 });
                             });
                         });
                         // Update actions reference after switch
-                        await new Promise((resolve) => setTimeout(resolve, 50));
+                        await new Promise((resolve) => setTimeout(resolve, 100));
                     }
                 } else {
                     throw new Error(
@@ -592,7 +687,7 @@ export const App: React.FC = () => {
             let currentActions = actions;
             if ((window as any).__currentActions) {
                 // Wait a bit for actions to update after adapter switch
-                await new Promise((resolve) => setTimeout(resolve, 50));
+                await new Promise((resolve) => setTimeout(resolve, 100));
                 currentActions = (window as any).__currentActions;
             }
 
@@ -608,12 +703,34 @@ export const App: React.FC = () => {
             const commentId = firstCardComments[0]?.id;
             const cardIds = firstDeckCards.slice(0, 10).map((c) => c.id);
 
+            // Clean up any old benchmark render counter keys to prevent interference
+            const windowAny = window as any;
+            const oldCounterKeys = Object.keys(windowAny).filter((key) =>
+                key.startsWith('__benchmarkRenderCounter_'),
+            );
+            for (const key of oldCounterKeys) {
+                delete windowAny[key];
+            }
+
             // Reset render counters AFTER adapter switch but BEFORE benchmark starts
             // This ensures we only measure the actual benchmark workload, not adapter switching
             globalRenderCounter.reset();
 
-            // Wait one more frame to ensure all switch renders are complete
-            await new Promise((resolve) => requestAnimationFrame(resolve));
+            // Wait for all React updates and effects to complete
+            await new Promise((resolve) => {
+                Promise.resolve().then(() => {
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            Promise.resolve().then(() => {
+                                requestAnimationFrame(resolve);
+                            });
+                        });
+                    });
+                });
+            });
+
+            // Mark benchmark as running to prevent IntersectionObserver interference
+            isBenchmarkRunningRef.current = true;
 
             // Now run benchmark - this will create its own runRenderCounter
             let result: BenchmarkResult;
@@ -698,6 +815,9 @@ export const App: React.FC = () => {
                     throw new Error(`Unknown scenario: ${targetScenario}`);
             }
 
+            // Mark benchmark as complete - allow IntersectionObserver to resume
+            isBenchmarkRunningRef.current = false;
+
             // Convert to standardized format
             return convertToStandardizedFormat(result, targetAdapter.name, targetScenario);
         };
@@ -774,145 +894,151 @@ export const App: React.FC = () => {
     return (
         <Provider store={store}>
             <AdapterContext.Provider value={{ adapter, actions }}>
-                <div style={styles.appStyles.container}>
-                    {isRunning && (
-                        <div style={styles.appStyles.overlay}>
-                            <div style={styles.appStyles.overlayContent}>
-                                <div style={styles.appStyles.overlaySpinner}>⏳</div>
-                                <div style={styles.appStyles.overlayTitle}>
-                                    Running Benchmarks...
-                                </div>
-                                {currentProgress && (
-                                    <div style={styles.appStyles.overlayProgress}>
-                                        {currentProgress}
+                <IntersectionObserverContext.Provider value={observerCallbacks}>
+                    <div style={styles.appStyles.container}>
+                        {isRunning && (
+                            <div style={styles.appStyles.overlay}>
+                                <div style={styles.appStyles.overlayContent}>
+                                    <div style={styles.appStyles.overlaySpinner}>⏳</div>
+                                    <div style={styles.appStyles.overlayTitle}>
+                                        Running Benchmarks...
                                     </div>
-                                )}
-                                {adapterTestResults.length > 0 && (
-                                    <div
-                                        style={{
-                                            marginTop: 20,
-                                            padding: '16px',
-                                            background: '#f8f9fa',
-                                            border: '1px solid #dee2e6',
-                                            borderRadius: '8px',
-                                            maxHeight: '300px',
-                                            overflowY: 'auto',
-                                            fontSize: '12px',
-                                        }}
-                                    >
-                                        <div style={{ fontWeight: 'bold', marginBottom: '12px' }}>
-                                            🧪 Adapter Test Results:
+                                    {currentProgress && (
+                                        <div style={styles.appStyles.overlayProgress}>
+                                            {currentProgress}
                                         </div>
-                                        {adapterTestResults.map((result, idx) => (
+                                    )}
+                                    {adapterTestResults.length > 0 && (
+                                        <div
+                                            style={{
+                                                marginTop: 20,
+                                                padding: '16px',
+                                                background: '#f8f9fa',
+                                                border: '1px solid #dee2e6',
+                                                borderRadius: '8px',
+                                                maxHeight: '300px',
+                                                overflowY: 'auto',
+                                                fontSize: '12px',
+                                            }}
+                                        >
                                             <div
-                                                key={idx}
-                                                style={{
-                                                    marginBottom: '8px',
-                                                    padding: '8px',
-                                                    background: result.passed
-                                                        ? '#d4edda'
-                                                        : '#f8d7da',
-                                                    border: `1px solid ${result.passed ? '#c3e6cb' : '#f5c6cb'}`,
-                                                    borderRadius: '4px',
-                                                }}
+                                                style={{ fontWeight: 'bold', marginBottom: '12px' }}
                                             >
+                                                🧪 Adapter Test Results:
+                                            </div>
+                                            {adapterTestResults.map((result, idx) => (
                                                 <div
+                                                    key={idx}
                                                     style={{
-                                                        fontWeight: 'bold',
-                                                        color: result.passed
-                                                            ? '#155724'
-                                                            : '#721c24',
+                                                        marginBottom: '8px',
+                                                        padding: '8px',
+                                                        background: result.passed
+                                                            ? '#d4edda'
+                                                            : '#f8d7da',
+                                                        border: `1px solid ${result.passed ? '#c3e6cb' : '#f5c6cb'}`,
+                                                        borderRadius: '4px',
                                                     }}
                                                 >
-                                                    {result.passed ? '✅' : '❌'}{' '}
-                                                    {result.adapterName}
-                                                </div>
-                                                {result.errors.length > 0 && (
                                                     <div
                                                         style={{
-                                                            marginTop: '4px',
-                                                            fontSize: '11px',
-                                                            color: '#721c24',
+                                                            fontWeight: 'bold',
+                                                            color: result.passed
+                                                                ? '#155724'
+                                                                : '#721c24',
                                                         }}
                                                     >
-                                                        {result.errors
-                                                            .slice(0, 2)
-                                                            .map((error, i) => (
-                                                                <div key={i}>• {error}</div>
-                                                            ))}
-                                                        {result.errors.length > 2 && (
-                                                            <div>
-                                                                ... and {result.errors.length - 2}{' '}
-                                                                more errors
-                                                            </div>
-                                                        )}
+                                                        {result.passed ? '✅' : '❌'}{' '}
+                                                        {result.adapterName}
                                                     </div>
-                                                )}
-                                            </div>
-                                        ))}
+                                                    {result.errors.length > 0 && (
+                                                        <div
+                                                            style={{
+                                                                marginTop: '4px',
+                                                                fontSize: '11px',
+                                                                color: '#721c24',
+                                                            }}
+                                                        >
+                                                            {result.errors
+                                                                .slice(0, 2)
+                                                                .map((error, i) => (
+                                                                    <div key={i}>• {error}</div>
+                                                                ))}
+                                                            {result.errors.length > 2 && (
+                                                                <div>
+                                                                    ... and{' '}
+                                                                    {result.errors.length - 2} more
+                                                                    errors
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div style={styles.appStyles.overlayText}>
+                                        Please wait while we measure performance.
+                                        <br />
+                                        This may take a few moments.
                                     </div>
-                                )}
-                                <div style={styles.appStyles.overlayText}>
-                                    Please wait while we measure performance.
-                                    <br />
-                                    This may take a few moments.
-                                </div>
-                                <div
-                                    style={{
-                                        ...styles.appStyles.overlayText,
-                                        marginTop: 20,
-                                        padding: '12px 16px',
-                                        background: '#FFF3CD',
-                                        border: '2px solid #FFC107',
-                                        borderRadius: '8px',
-                                        color: '#856404',
-                                        fontWeight: 600,
-                                        fontSize: 13,
-                                    }}
-                                >
-                                    ⚠️ <strong>Important:</strong> Please do not minimize or switch
-                                    browser tabs during testing. This may affect performance
-                                    measurements and accuracy of results.
+                                    <div
+                                        style={{
+                                            ...styles.appStyles.overlayText,
+                                            marginTop: 20,
+                                            padding: '12px 16px',
+                                            background: '#FFF3CD',
+                                            border: '2px solid #FFC107',
+                                            borderRadius: '8px',
+                                            color: '#856404',
+                                            fontWeight: 600,
+                                            fontSize: 13,
+                                        }}
+                                    >
+                                        ⚠️ <strong>Important:</strong> Please do not minimize or
+                                        switch browser tabs during testing. This may affect
+                                        performance measurements and accuracy of results.
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    )}
-                    <div style={styles.appLayoutStyles.mainContent}>
-                        {showDebug ? (
-                            <DebugRenders
-                                adapters={adapters}
-                                adapterIndex={adapterIndex}
-                                setAdapterIndex={setAdapterIndex}
-                                dataset={dataset}
-                                onBack={handleToggleDebug}
-                            />
-                        ) : (
-                            <>
-                                <InfoBanner />
-                                <Toolbar
-                                    adapter={adapter}
+                        )}
+                        <div style={styles.appLayoutStyles.mainContent}>
+                            {showDebug ? (
+                                <DebugRenders
+                                    adapters={adapters}
                                     adapterIndex={adapterIndex}
                                     setAdapterIndex={setAdapterIndex}
-                                    actions={actions}
                                     dataset={dataset}
-                                    adapters={adapters}
-                                    onBenchmarkComplete={handleBenchmarkComplete}
-                                    onClearResults={handleClearResults}
-                                    onShowResults={handleShowResults}
-                                    onToggleDebug={handleToggleDebug}
-                                    isRunning={isRunning}
-                                    setIsRunning={setIsRunning}
-                                    setCurrentProgress={setCurrentProgress}
-                                    setAdapterTestResults={setAdapterTestResults}
+                                    onBack={handleToggleDebug}
                                 />
-                                <div style={styles.appLayoutStyles.contentArea}>
-                                    <DeckList adapter={adapter} />
-                                    <HeatmapOverlay />
-                                </div>
-                            </>
-                        )}
+                            ) : (
+                                <>
+                                    <InfoBanner />
+                                    <Toolbar
+                                        adapter={adapter}
+                                        adapterIndex={adapterIndex}
+                                        setAdapterIndex={setAdapterIndex}
+                                        actions={actions}
+                                        dataset={dataset}
+                                        adapters={adapters}
+                                        onBenchmarkComplete={handleBenchmarkComplete}
+                                        onClearResults={handleClearResults}
+                                        onShowResults={handleShowResults}
+                                        onToggleDebug={handleToggleDebug}
+                                        isRunning={isRunning}
+                                        setIsRunning={setIsRunning}
+                                        setCurrentProgress={setCurrentProgress}
+                                        setAdapterTestResults={setAdapterTestResults}
+                                        isBenchmarkRunningRef={isBenchmarkRunningRef}
+                                    />
+                                    <div style={styles.appLayoutStyles.contentArea}>
+                                        <DeckList adapter={adapter} />
+                                        <HeatmapOverlay />
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
-                </div>
+                </IntersectionObserverContext.Provider>
             </AdapterContext.Provider>
         </Provider>
     );
@@ -1012,6 +1138,7 @@ const Toolbar: React.FC<{
     setIsRunning: (running: boolean) => void;
     setCurrentProgress: (progress: string) => void;
     setAdapterTestResults?: (results: AdapterTestResult[]) => void;
+    isBenchmarkRunningRef: React.MutableRefObject<boolean>;
 }> = ({
     adapter,
     adapterIndex,
@@ -1027,6 +1154,7 @@ const Toolbar: React.FC<{
     setIsRunning,
     setCurrentProgress,
     setAdapterTestResults,
+    isBenchmarkRunningRef,
 }) => {
     useCounterKey('Toolbar');
     const names = adapters.map((a) => a.name);
@@ -1055,23 +1183,30 @@ const Toolbar: React.FC<{
     // Toolbar callbacks for ids-based mode
     const runUpdateBenchmark = useCallback(async () => {
         debugLog(`🔄 Starting Update Benchmark for ${adapter.name}...`);
-        const result = await benchmarkRunner.runBenchmark(
-            'background-churn',
-            adapter.name,
-            actions,
-            async (wrappedActions) => {
-                // Automatically measure latency for multiple background churn triggers
-                for (let i = 0; i < 5; i++) {
-                    await wrappedActions.backgroundChurnStart();
-                }
-                // Stop background churn (latency is measured automatically)
-                wrappedActions.backgroundChurnStop();
-            },
-            10,
-        );
-        debugLog(`✅ Update Benchmark Results - ${adapter.name}:`, result);
-        onBenchmarkComplete(result);
-    }, [adapter.name, actions, onBenchmarkComplete]);
+        // Mark benchmark as running to prevent IntersectionObserver interference
+        isBenchmarkRunningRef.current = true;
+        try {
+            const result = await benchmarkRunner.runBenchmark(
+                'background-churn',
+                adapter.name,
+                actions,
+                async (wrappedActions) => {
+                    // Automatically measure latency for multiple background churn triggers
+                    for (let i = 0; i < 5; i++) {
+                        await wrappedActions.backgroundChurnStart();
+                    }
+                    // Stop background churn (latency is measured automatically)
+                    wrappedActions.backgroundChurnStop();
+                },
+                10,
+            );
+            debugLog(`✅ Update Benchmark Results - ${adapter.name}:`, result);
+            onBenchmarkComplete(result);
+        } finally {
+            // Reset flag after benchmark completes
+            isBenchmarkRunningRef.current = false;
+        }
+    }, [adapter.name, actions, onBenchmarkComplete, isBenchmarkRunningRef]);
 
     const runInlineEditBenchmark = useCallback(async () => {
         debugLog(`✏️ Starting Inline Edit Benchmark for ${adapter.name}...`);
@@ -1080,29 +1215,36 @@ const Toolbar: React.FC<{
             debugWarn('No comments available for inline edit benchmark');
             return;
         }
-        const result = await benchmarkRunner.runBenchmark(
-            'inline-editing',
-            adapter.name,
-            actions,
-            async (wrappedActions, runNum) => {
-                const commentId = availableCommentIds[runNum % availableCommentIds.length];
-                if (!commentId) return;
-                const runPrefix = `Run${runNum}_`;
-                const baseTimestamp = Date.now();
-                for (let i = 0; i < 20; i++) {
-                    const uniqueTimestamp = baseTimestamp + i;
-                    // Latency is automatically measured for each action call
-                    await wrappedActions.updateCommentText(
-                        commentId,
-                        `${runPrefix}Typing update ${i} at ${uniqueTimestamp}: testing reactivity to frequent state changes`,
-                    );
-                }
-            },
-            10,
-        );
-        debugLog(`✅ Inline Edit Benchmark Results - ${adapter.name}:`, result);
-        onBenchmarkComplete(result);
-    }, [adapter.name, actions, firstCardCommentIds, onBenchmarkComplete]);
+        // Mark benchmark as running to prevent IntersectionObserver interference
+        isBenchmarkRunningRef.current = true;
+        try {
+            const result = await benchmarkRunner.runBenchmark(
+                'inline-editing',
+                adapter.name,
+                actions,
+                async (wrappedActions, runNum) => {
+                    const commentId = availableCommentIds[runNum % availableCommentIds.length];
+                    if (!commentId) return;
+                    const runPrefix = `Run${runNum}_`;
+                    const baseTimestamp = Date.now();
+                    for (let i = 0; i < 20; i++) {
+                        const uniqueTimestamp = baseTimestamp + i;
+                        // Latency is automatically measured for each action call
+                        await wrappedActions.updateCommentText(
+                            commentId,
+                            `${runPrefix}Typing update ${i} at ${uniqueTimestamp}: testing reactivity to frequent state changes`,
+                        );
+                    }
+                },
+                10,
+            );
+            debugLog(`✅ Inline Edit Benchmark Results - ${adapter.name}:`, result);
+            onBenchmarkComplete(result);
+        } finally {
+            // Reset flag after benchmark completes
+            isBenchmarkRunningRef.current = false;
+        }
+    }, [adapter.name, actions, firstCardCommentIds, onBenchmarkComplete, isBenchmarkRunningRef]);
 
     const runBulkUpdateBenchmark = useCallback(async () => {
         debugLog(`📦 Starting Bulk Update Benchmark for ${adapter.name}...`);
@@ -1115,47 +1257,54 @@ const Toolbar: React.FC<{
             return;
         }
 
-        const result = await benchmarkRunner.runBenchmark(
-            'bulk-update',
-            adapter.name,
-            actions,
-            async (wrappedActions, runNum) => {
-                // Use different cards for each run to ensure variety and fresh operations
-                const startIdx = (runNum * 5) % allAvailableCards.length;
-                const cardIds = allAvailableCards
-                    .slice(startIdx, startIdx + 10)
-                    .map((c) => c.id)
-                    .filter(Boolean);
+        // Mark benchmark as running to prevent IntersectionObserver interference
+        isBenchmarkRunningRef.current = true;
+        try {
+            const result = await benchmarkRunner.runBenchmark(
+                'bulk-update',
+                adapter.name,
+                actions,
+                async (wrappedActions, runNum) => {
+                    // Use different cards for each run to ensure variety and fresh operations
+                    const startIdx = (runNum * 5) % allAvailableCards.length;
+                    const cardIds = allAvailableCards
+                        .slice(startIdx, startIdx + 10)
+                        .map((c) => c.id)
+                        .filter(Boolean);
 
-                if (cardIds.length === 0) return;
+                    if (cardIds.length === 0) return;
 
-                // Multiple operations to ensure components actually re-render:
-                // 1. Toggle tags on different subsets of cards with different tags for each step
-                // 2. Use runNum and iteration index for variety both across and within runs
-                // 3. This ensures each step creates distinct state changes
-                for (let i = 0; i < 5; i++) {
-                    // Use different tags for each iteration (varied pattern with runNum offset)
-                    const tagId = `tag_${(i * 2 + runNum * 3) % 50}`; // 50 tags with rotation
-                    // Use different subset of cards for each iteration to ensure variety
-                    // Shift the subset by i to work with different cards each time
-                    const startCardIdx = (i * 2) % Math.max(1, cardIds.length - 3);
-                    const subsetSize = Math.min(5, cardIds.length - startCardIdx);
-                    const cardSubset = cardIds.slice(startCardIdx, startCardIdx + subsetSize);
+                    // Multiple operations to ensure components actually re-render:
+                    // 1. Toggle tags on different subsets of cards with different tags for each step
+                    // 2. Use runNum and iteration index for variety both across and within runs
+                    // 3. This ensures each step creates distinct state changes
+                    for (let i = 0; i < 5; i++) {
+                        // Use different tags for each iteration (varied pattern with runNum offset)
+                        const tagId = `tag_${(i * 2 + runNum * 3) % 50}`; // 50 tags with rotation
+                        // Use different subset of cards for each iteration to ensure variety
+                        // Shift the subset by i to work with different cards each time
+                        const startCardIdx = (i * 2) % Math.max(1, cardIds.length - 3);
+                        const subsetSize = Math.min(5, cardIds.length - startCardIdx);
+                        const cardSubset = cardIds.slice(startCardIdx, startCardIdx + subsetSize);
 
-                    if (cardSubset.length > 0) {
-                        // Latency is automatically measured for each action call
-                        await wrappedActions.bulkToggleTagOnCards(cardSubset, tagId);
+                        if (cardSubset.length > 0) {
+                            // Latency is automatically measured for each action call
+                            await wrappedActions.bulkToggleTagOnCards(cardSubset, tagId);
+                        }
                     }
-                }
-                // Trigger card updates (latency is automatically measured)
-                await wrappedActions.backgroundChurnStart();
-            },
-            10,
-        );
+                    // Trigger card updates (latency is automatically measured)
+                    await wrappedActions.backgroundChurnStart();
+                },
+                10,
+            );
 
-        debugLog(`✅ Bulk Update Benchmark Results - ${adapter.name}:`, result);
-        onBenchmarkComplete(result);
-    }, [adapter.name, actions, allCardsForBulk, onBenchmarkComplete]);
+            debugLog(`✅ Bulk Update Benchmark Results - ${adapter.name}:`, result);
+            onBenchmarkComplete(result);
+        } finally {
+            // Reset flag after benchmark completes
+            isBenchmarkRunningRef.current = false;
+        }
+    }, [adapter.name, actions, allCardsForBulk, onBenchmarkComplete, isBenchmarkRunningRef]);
 
     const runAllBenchmarks = useCallback(async () => {
         debugLog(`🚀 Running all benchmarks for ${adapter.name}...`);
@@ -1269,15 +1418,52 @@ const Toolbar: React.FC<{
                 try {
                     setAdapterIndex(i);
                 } catch {}
-                // Give React time to remount Provider and hooks
-                await new Promise((resolve) => requestAnimationFrame(resolve));
-                await new Promise((resolve) => requestAnimationFrame(resolve));
+                // Wait for React to fully update - use multiple RAFs and microtask queue flush
+                // This ensures all state updates, re-renders, and effects are complete
+                await new Promise((resolve) => {
+                    Promise.resolve().then(() => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                Promise.resolve().then(() => {
+                                    requestAnimationFrame(() => {
+                                        setTimeout(resolve, 200);
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
                 // Use actions from the live context (UI tree)
                 const uiActions = (window as any).__currentActions || actions;
                 const uiAdapter = (window as any).__currentAdapter || target;
+
+                // Clean up any old benchmark render counter keys
+                const windowAny = window as any;
+                const oldCounterKeys = Object.keys(windowAny).filter((key) =>
+                    key.startsWith('__benchmarkRenderCounter_'),
+                );
+                for (const key of oldCounterKeys) {
+                    delete windowAny[key];
+                }
+
                 // Reset render counter after switch and before measurements
                 globalRenderCounter.reset();
-                await new Promise((resolve) => requestAnimationFrame(resolve));
+
+                // Wait for all React updates to complete
+                await new Promise((resolve) => {
+                    Promise.resolve().then(() => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                Promise.resolve().then(() => {
+                                    requestAnimationFrame(resolve);
+                                });
+                            });
+                        });
+                    });
+                });
+
+                // Mark benchmark as running to prevent IntersectionObserver interference
+                isBenchmarkRunningRef.current = true;
 
                 // Run Update Benchmark
                 setCurrentProgress(
@@ -1299,6 +1485,8 @@ const Toolbar: React.FC<{
                     10,
                 );
                 onBenchmarkComplete(updateResult);
+                // Reset flag after benchmark completes
+                isBenchmarkRunningRef.current = false;
                 await new Promise((resolve) => setTimeout(resolve, 300));
 
                 // Run Inline Edit Benchmark
@@ -1342,6 +1530,8 @@ const Toolbar: React.FC<{
                         10,
                     );
                     onBenchmarkComplete(editResult);
+                    // Reset flag after benchmark completes
+                    isBenchmarkRunningRef.current = false;
                     await new Promise((resolve) => setTimeout(resolve, 300));
                 }
 
@@ -1399,8 +1589,13 @@ const Toolbar: React.FC<{
                         10,
                     );
                     onBenchmarkComplete(bulkResult);
+                    // Reset flag after benchmark completes
+                    isBenchmarkRunningRef.current = false;
                     await new Promise((resolve) => setTimeout(resolve, 300));
                 }
+
+                // Ensure flag is reset after all benchmarks for this adapter
+                isBenchmarkRunningRef.current = false;
 
                 debugLog(`✅ Completed all tests for ${target.name}\n`);
             }

@@ -101,6 +101,12 @@ const cardsSlice = createSlice({
                 }
             }
         },
+        setCardVisibility: (state, action: PayloadAction<{ cardId: ID; isVisible: boolean }>) => {
+            const card = state.entities[action.payload.cardId];
+            if (card) {
+                card.isVisible = action.payload.isVisible;
+            }
+        },
     },
     extraReducers: (builder) => {
         // When comments are set, update commentIds in cards
@@ -438,6 +444,11 @@ function createHooks(): ViewModelHooksIdsBased {
             );
             return useSelector(selectTagIds);
         },
+        useCardVisibility(cardId: ID): boolean {
+            return useSelector(
+                (state: RootReduxState) => state.cards.entities[cardId]?.isVisible ?? false,
+            );
+        },
     };
 }
 
@@ -593,6 +604,9 @@ const actions = (store: ReduxStore) => ({
     },
 
     backgroundChurnStop() {},
+    setCardVisibility(cardId: ID, isVisible: boolean) {
+        store.dispatch(cardsSlice.actions.setCardVisibility({ cardId, isVisible }));
+    },
 });
 
 function createReduxAdapter(): StoreAdapter {

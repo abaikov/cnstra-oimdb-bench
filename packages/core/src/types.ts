@@ -23,6 +23,7 @@ export type Card = {
     authorId: ID;
     createdAt: number;
     updatedAt: number;
+    isVisible?: boolean;
 };
 
 export type Deck = {
