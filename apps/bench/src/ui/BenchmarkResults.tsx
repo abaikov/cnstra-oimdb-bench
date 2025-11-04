@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import adapterLocData from '@bench/core/src/adapter-loc.json';
 
 type BenchmarkMetrics = {
@@ -241,19 +241,6 @@ export const BenchmarkResults: React.FC<BenchmarkResultsProps> = ({ results, onC
     const scenarios = [...new Set(results.map((r) => r.scenario))];
     const adapters = [...new Set(results.map((r) => r.adapter))];
 
-    // Always select the first scenario by default, or keep current selection if it exists
-    const [selectedScenario, setSelectedScenario] = useState<string>(
-        scenarios.length > 0 ? scenarios[0] : '',
-    );
-    const [comparisonMode] = useState(false);
-
-    // Update selected scenario when results change (e.g., first scenario appears)
-    useEffect(() => {
-        if (scenarios.length > 0 && (!selectedScenario || !scenarios.includes(selectedScenario))) {
-            setSelectedScenario(scenarios[0]);
-        }
-    }, [results, scenarios, selectedScenario]);
-
     // Load adapter lines of code data
     const adapterLocMap: Record<string, number> = {};
     if (adapterLocData && adapterLocData.adapters) {
@@ -262,10 +249,11 @@ export const BenchmarkResults: React.FC<BenchmarkResultsProps> = ({ results, onC
         });
     }
 
-    // Always show results for selected scenario only
-    const filteredResults = selectedScenario
-        ? results.filter((r) => r.scenario === selectedScenario)
-        : [];
+    // Group results by scenario
+    const resultsByScenario: Record<string, BenchmarkResult[]> = {};
+    scenarios.forEach((scenario) => {
+        resultsByScenario[scenario] = results.filter((r) => r.scenario === scenario);
+    });
 
     const getPerformanceScore = (result: BenchmarkResult): number => {
         const safeAvg = {
@@ -342,7 +330,7 @@ export const BenchmarkResults: React.FC<BenchmarkResultsProps> = ({ results, onC
                 scenarios: scenarios,
                 adapterDescriptions: {
                     'Cnstra + Oimdb (ids-based)':
-                        'Reactive collections with CNS (Compositional Neural State) - combines Cnstra core with OIMDB reactive indexing',
+                        'Reactive collections with CNS (Central Nervous System) - combines Cnstra core with OIMDB reactive indexing',
                     'Redux Toolkit (ids-based)':
                         'Official Redux toolkit with RTK Query - uses createSlice, createEntityAdapter, and optimized selectors',
                     'Effector (ids-based)':
@@ -495,46 +483,6 @@ export const BenchmarkResults: React.FC<BenchmarkResultsProps> = ({ results, onC
         );
     }
 
-    if (filteredResults.length === 0) {
-        return (
-            <div
-                style={{
-                    padding: 60,
-                    textAlign: 'center',
-                    color: '#666',
-                }}
-            >
-                <div style={{ fontSize: 48, marginBottom: 16 }}>📊</div>
-                <h3 style={{ fontSize: 24, marginBottom: 12, color: '#333' }}>
-                    No results for selected scenario
-                </h3>
-                <p style={{ fontSize: 16, color: '#888' }}>Please select a scenario with results</p>
-            </div>
-        );
-    }
-
-    // Prepare chart data for comparison mode
-    const chartData =
-        comparisonMode && filteredResults.length > 1
-            ? {
-                  executionTime: filteredResults.map((r) => ({
-                      label: r.adapter,
-                      value: r.average.executionTime,
-                      color: getAdapterColor(r.adapter),
-                  })),
-                  memoryUsage: filteredResults.map((r) => ({
-                      label: r.adapter,
-                      value: r.average.memoryUsage,
-                      color: getAdapterColor(r.adapter),
-                  })),
-                  fps: filteredResults.map((r) => ({
-                      label: r.adapter,
-                      value: r.average.fps,
-                      color: getAdapterColor(r.adapter),
-                  })),
-              }
-            : null;
-
     return (
         <div style={{ padding: '32px' }}>
             {/* Header */}
@@ -636,744 +584,1164 @@ export const BenchmarkResults: React.FC<BenchmarkResultsProps> = ({ results, onC
                 </div>
             </div>
 
-            {/* Test Information */}
-            {selectedScenario && filteredResults.length > 0 && (
-                <div
-                    style={{
-                        marginBottom: 32,
-                        padding: 24,
-                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                        borderRadius: '12px',
-                        border: '1px solid #e9ecef',
-                        color: 'white',
-                    }}
-                >
-                    <h3
-                        style={{
-                            margin: '0 0 16px 0',
-                            fontSize: '20px',
-                            fontWeight: 700,
-                            color: 'white',
-                        }}
-                    >
-                        📋 Test Information:{' '}
-                        {selectedScenario
-                            .replace(/-/g, ' ')
-                            .replace(/\b\w/g, (l) => l.toUpperCase())}
-                    </h3>
-                    <div
-                        style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-                            gap: 20,
-                            fontSize: '14px',
-                            lineHeight: 1.8,
-                        }}
-                    >
-                        <div>
-                            <strong style={{ display: 'block', marginBottom: 8, fontSize: '15px' }}>
-                                🧪 What We Tested:
-                            </strong>
-                            {selectedScenario === 'inline-editing' && (
-                                <div style={{ opacity: 0.95 }}>
-                                    Rapid text editing simulation: 20 consecutive comment text
-                                    updates with 16ms delays between each keystroke. Measures
-                                    reactivity and input responsiveness during frequent state
-                                    changes.
-                                </div>
-                            )}
-                            {selectedScenario === 'bulk-update' && (
-                                <div style={{ opacity: 0.95 }}>
-                                    Batch operations: 5 cycles of bulk tag toggles on 10 cards,
-                                    followed by background churn operations. Measures efficiency of
-                                    bulk state updates and batch processing.
-                                </div>
-                            )}
-                            {selectedScenario === 'background-churn' && (
-                                <div style={{ opacity: 0.95 }}>
-                                    Continuous background updates: Multiple concurrent updates to
-                                    different entities (decks, cards, comments). Measures
-                                    performance under sustained load and update amplification.
-                                </div>
-                            )}
-                        </div>
-                        <div>
-                            <strong style={{ display: 'block', marginBottom: 8, fontSize: '15px' }}>
-                                📊 Test Data:
-                            </strong>
-                            <div style={{ opacity: 0.95 }}>
-                                • 50 decks with 10 cards each (500 cards total)
-                                <br />
-                                • 2000 users
-                                <br />
-                                • 50 tags
-                                <br />
-                                • 3-5 comments per card (~1,500-2,500 comments)
-                                <br />• Same dataset for all adapters (seed: 42)
-                            </div>
-                        </div>
-                        <div>
-                            <strong style={{ display: 'block', marginBottom: 8, fontSize: '15px' }}>
-                                🔬 Measurement Methodology:
-                            </strong>
-                            <div style={{ opacity: 0.95 }}>
-                                • <strong>Runs:</strong> 5 iterations per adapter (100ms pause
-                                between runs) for statistical accuracy
-                                <br />• <strong>Execution Time:</strong> Total time from start to
-                                end (includes all delays/timeouts, measured via performance.now())
-                                <br />• <strong>Memory:</strong> Change in memory during test
-                                execution only (baseline before test excluded). GC is forced before
-                                each run if available (Chrome DevTools).
-                                <br />• <strong>FPS:</strong> Frame rate measured during test
-                                execution using requestAnimationFrame counter
-                                <br />• <strong>Renders:</strong> Total React component re-renders
-                                tracked via render counter (reset before each run)
-                                <br />• <strong>Latency:</strong> Time from state update to visual
-                                change (update → React flush → paint via RAF). P50/P95/P99
-                                percentiles across all operations.
-                                <br />• <strong>Fairness:</strong> Same dataset (seed:42) and
-                                workload for all adapters. Store creation happens before
-                                measurements.
-                                <br />• Results show averages across all 5 runs for better
-                                statistical significance
-                            </div>
-                        </div>
-                        {filteredResults.length > 1 && (
-                            <div>
-                                <strong
-                                    style={{
-                                        display: 'block',
-                                        marginBottom: 8,
-                                        fontSize: '15px',
-                                    }}
-                                >
-                                    🏆 Winners by Metric:
-                                </strong>
-                                <div style={{ opacity: 0.95 }}>
-                                    {(() => {
-                                        const execTimes = filteredResults.map(
-                                            (r) => r.average.executionTime,
-                                        );
-                                        const bestExec = Math.min(...execTimes);
-                                        const bestExecAdapter = filteredResults.find(
-                                            (r) => r.average.executionTime === bestExec,
-                                        )?.adapter;
+            {/* All Results Tables - Show all scenarios */}
+            {scenarios.map((scenario) => {
+                const scenarioResults = resultsByScenario[scenario] || [];
+                if (scenarioResults.length === 0) return null;
 
-                                        const memoryUsages = filteredResults.map(
-                                            (r) => r.average.memoryUsage,
-                                        );
-                                        const bestMemory = Math.min(...memoryUsages);
-                                        const bestMemoryAdapter = filteredResults.find(
-                                            (r) => r.average.memoryUsage === bestMemory,
-                                        )?.adapter;
+                const scenarioName = scenario
+                    .replace(/-/g, ' ')
+                    .replace(/\b\w/g, (l) => l.toUpperCase());
 
-                                        const fpsValues = filteredResults.map((r) => r.average.fps);
-                                        const bestFps = Math.max(...fpsValues);
-                                        const bestFpsAdapter = filteredResults.find(
-                                            (r) => r.average.fps === bestFps,
-                                        )?.adapter;
-
-                                        return (
-                                            <>
-                                                <strong>⏱️ Fastest:</strong> {bestExecAdapter}
-                                                <br />
-                                                <strong>💾 Least Memory:</strong>{' '}
-                                                {bestMemoryAdapter}
-                                                <br />
-                                                <strong>🎮 Best FPS:</strong> {bestFpsAdapter}
-                                            </>
-                                        );
-                                    })()}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Filters */}
-            <div
-                style={{
-                    display: 'flex',
-                    gap: 20,
-                    marginBottom: 32,
-                    alignItems: 'center',
-                    padding: '20px',
-                    background: '#f8f9fa',
-                    borderRadius: '12px',
-                    border: '1px solid #e9ecef',
-                }}
-            >
-                <label
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                        fontWeight: 600,
-                        color: '#333',
-                    }}
-                >
-                    <span>Scenario:</span>
-                    <select
-                        value={selectedScenario}
-                        onChange={(e) => setSelectedScenario(e.target.value)}
-                        style={{
-                            padding: '8px 16px',
-                            borderRadius: '8px',
-                            border: '2px solid #ddd',
-                            fontSize: '14px',
-                            fontWeight: 500,
-                            cursor: 'pointer',
-                            background: 'white',
-                            minWidth: 200,
-                        }}
-                    >
-                        {scenarios.map((scenario) => (
-                            <option key={scenario} value={scenario}>
-                                {scenario
-                                    .replace(/-/g, ' ')
-                                    .replace(/\b\w/g, (l) => l.toUpperCase())}
-                            </option>
-                        ))}
-                    </select>
-                </label>
-
-                {/* Charts toggle removed */}
-            </div>
-
-            {/* Charts removed */}
-
-            {/* Results Table */}
-            <div
-                style={{
-                    overflowX: 'auto',
-                    borderRadius: '12px',
-                    boxShadow: '0 2px 12px rgba(0,0,0,0.08)',
-                    border: '1px solid #e9ecef',
-                }}
-            >
-                <table
-                    style={{
-                        width: '100%',
-                        borderCollapse: 'collapse',
-                        backgroundColor: 'white',
-                    }}
-                >
-                    <thead>
-                        <tr
+                return (
+                    <div key={scenario} style={{ marginBottom: 48 }}>
+                        <h3
                             style={{
-                                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                                color: 'white',
+                                margin: '0 0 20px 0',
+                                fontSize: '22px',
+                                fontWeight: 700,
+                                color: '#333',
+                                paddingBottom: '12px',
+                                borderBottom: '3px solid #667eea',
                             }}
                         >
-                            <th
+                            {scenarioName}
+                        </h3>
+                        <div
+                            style={{
+                                overflowX: 'auto',
+                                borderRadius: '12px',
+                                boxShadow: '0 2px 12px rgba(0,0,0,0.08)',
+                                border: '1px solid #e9ecef',
+                            }}
+                        >
+                            <table
                                 style={{
-                                    padding: 16,
-                                    textAlign: 'left',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
+                                    width: '100%',
+                                    borderCollapse: 'collapse',
+                                    backgroundColor: 'white',
                                 }}
                             >
-                                📦 Adapter
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'left',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                            >
-                                🎯 Scenario
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="Lines of code required to implement this adapter. Lower indicates simpler implementation."
-                            >
-                                📝 LOC
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="Overall performance score (0-100) combining all metrics. Higher is better."
-                            >
-                                ⭐ Score
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="JavaScript execution time per run (average). Lower is better."
-                            >
-                                ⚙️ JS Time (ms)
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="Number of React components that re-rendered. Lower is better."
-                            >
-                                🎨 Renders
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="Memory consumed during the operation. Lower is better."
-                            >
-                                💾 Memory
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="Frames per second - animation smoothness. 60 FPS is ideal. Higher is better."
-                            >
-                                🎮 FPS
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="Median latency (p50). Lower is better."
-                            >
-                                📈 P50 (ms)
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="95th percentile latency (p95). Lower is better."
-                            >
-                                📈 P95 (ms)
-                            </th>
-                            <th
-                                style={{
-                                    padding: 16,
-                                    textAlign: 'right',
-                                    fontWeight: 700,
-                                    fontSize: '14px',
-                                }}
-                                title="99th percentile latency (p99). Lower is better."
-                            >
-                                📈 P99 (ms)
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {filteredResults
-                            .sort((a, b) => getPerformanceScore(b) - getPerformanceScore(a))
-                            .map((result, index) => {
-                                const score = getPerformanceScore(result);
-
-                                // Calculate best/worst for each metric within filtered results
-                                const executionTimes = filteredResults.map(
-                                    (r) => r.average.executionTime,
-                                );
-                                const renderCounts = filteredResults.map(
-                                    (r) => r.average.renderCount,
-                                );
-                                const memoryUsages = filteredResults.map(
-                                    (r) => r.average.memoryUsage,
-                                );
-                                const fpsValues = filteredResults.map((r) => r.average.fps);
-
-                                const isBestExecution =
-                                    result.average.executionTime === Math.min(...executionTimes);
-                                const isBestRenders =
-                                    result.average.renderCount === Math.min(...renderCounts);
-                                const isBestMemory =
-                                    result.average.memoryUsage === Math.min(...memoryUsages);
-                                const isBestFps = result.average.fps === Math.max(...fpsValues);
-
-                                const isWorstExecution =
-                                    result.average.executionTime === Math.max(...executionTimes);
-                                const isWorstRenders =
-                                    result.average.renderCount === Math.max(...renderCounts);
-                                const isWorstMemory =
-                                    result.average.memoryUsage === Math.max(...memoryUsages);
-                                const isWorstFps = result.average.fps === Math.min(...fpsValues);
-
-                                return (
+                                <thead>
                                     <tr
-                                        key={`${result.adapter}-${result.scenario}-${index}`}
                                         style={{
-                                            backgroundColor: index % 2 === 0 ? '#fafafa' : 'white',
-                                            borderBottom: '1px solid #eee',
-                                            transition: 'background 0.2s ease',
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            e.currentTarget.style.backgroundColor = '#f0f4ff';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor =
-                                                index % 2 === 0 ? '#fafafa' : 'white';
+                                            background:
+                                                'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                            color: 'white',
                                         }}
                                     >
-                                        <td
+                                        <th
                                             style={{
                                                 padding: 16,
+                                                textAlign: 'left',
                                                 fontWeight: 700,
                                                 fontSize: '14px',
                                             }}
                                         >
-                                            <span
-                                                style={{
-                                                    color: getAdapterColor(result.adapter),
-                                                    display: 'inline-block',
-                                                    padding: '4px 12px',
-                                                    background: `${getAdapterColor(result.adapter)}15`,
-                                                    borderRadius: '6px',
-                                                }}
-                                            >
-                                                {result.adapter}
-                                            </span>
-                                        </td>
-                                        <td
-                                            style={{ padding: 16, fontSize: '14px', color: '#666' }}
+                                            📦 Adapter
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="Lines of code required to implement this adapter. Lower indicates simpler implementation."
                                         >
-                                            {result.scenario
-                                                .replace(/-/g, ' ')
-                                                .replace(/\b\w/g, (l) => l.toUpperCase())}
-                                        </td>
-                                        <td style={{ padding: 16, textAlign: 'right' }}>
-                                            {(() => {
-                                                // Strip "(ids-based)" suffix to match LOC map keys
-                                                const baseAdapterName = result.adapter.replace(
-                                                    / \(ids-based\)$/,
-                                                    '',
-                                                );
-                                                const loc = adapterLocMap[baseAdapterName];
-                                                return loc ? (
-                                                    <span
+                                            📝 LOC
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="Overall performance score (0-100) combining all metrics. Higher is better."
+                                        >
+                                            ⭐ Score
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="JavaScript execution time per run (average). Lower is better."
+                                        >
+                                            ⚙️ JS Time (ms)
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="Number of React components that re-rendered. Lower is better."
+                                        >
+                                            🎨 Renders
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="Memory consumed during the operation. Lower is better."
+                                        >
+                                            💾 Memory
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="Frames per second - animation smoothness. 60 FPS is ideal. Higher is better."
+                                        >
+                                            🎮 FPS
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="Median latency (p50). Lower is better."
+                                        >
+                                            📈 P50 (ms)
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="95th percentile latency (p95). Lower is better."
+                                        >
+                                            📈 P95 (ms)
+                                        </th>
+                                        <th
+                                            style={{
+                                                padding: 16,
+                                                textAlign: 'right',
+                                                fontWeight: 700,
+                                                fontSize: '14px',
+                                            }}
+                                            title="99th percentile latency (p99). Lower is better."
+                                        >
+                                            📈 P99 (ms)
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {scenarioResults
+                                        .sort(
+                                            (a, b) =>
+                                                getPerformanceScore(b) - getPerformanceScore(a),
+                                        )
+                                        .map((result, index) => {
+                                            const score = getPerformanceScore(result);
+
+                                            // Calculate best/worst for each metric within scenario results
+                                            const executionTimes = scenarioResults.map(
+                                                (r) => r.average.executionTime,
+                                            );
+                                            const renderCounts = scenarioResults.map(
+                                                (r) => r.average.renderCount,
+                                            );
+                                            const memoryUsages = scenarioResults.map(
+                                                (r) => r.average.memoryUsage,
+                                            );
+                                            const fpsValues = scenarioResults.map(
+                                                (r) => r.average.fps,
+                                            );
+
+                                            const isBestExecution =
+                                                result.average.executionTime ===
+                                                Math.min(...executionTimes);
+                                            const isBestRenders =
+                                                result.average.renderCount ===
+                                                Math.min(...renderCounts);
+                                            const isBestMemory =
+                                                result.average.memoryUsage ===
+                                                Math.min(...memoryUsages);
+                                            const isBestFps =
+                                                result.average.fps === Math.max(...fpsValues);
+
+                                            const isWorstExecution =
+                                                result.average.executionTime ===
+                                                Math.max(...executionTimes);
+                                            const isWorstRenders =
+                                                result.average.renderCount ===
+                                                Math.max(...renderCounts);
+                                            const isWorstMemory =
+                                                result.average.memoryUsage ===
+                                                Math.max(...memoryUsages);
+                                            const isWorstFps =
+                                                result.average.fps === Math.min(...fpsValues);
+
+                                            return (
+                                                <tr
+                                                    key={`${result.adapter}-${result.scenario}-${index}`}
+                                                    style={{
+                                                        backgroundColor:
+                                                            index % 2 === 0 ? '#fafafa' : 'white',
+                                                        borderBottom: '1px solid #eee',
+                                                        transition: 'background 0.2s ease',
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        e.currentTarget.style.backgroundColor =
+                                                            '#f0f4ff';
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        e.currentTarget.style.backgroundColor =
+                                                            index % 2 === 0 ? '#fafafa' : 'white';
+                                                    }}
+                                                >
+                                                    <td
                                                         style={{
+                                                            padding: 16,
+                                                            fontWeight: 700,
+                                                            fontSize: '14px',
+                                                        }}
+                                                    >
+                                                        <span
+                                                            style={{
+                                                                color: getAdapterColor(
+                                                                    result.adapter,
+                                                                ),
+                                                                display: 'inline-block',
+                                                                padding: '4px 12px',
+                                                                background: `${getAdapterColor(result.adapter)}15`,
+                                                                borderRadius: '6px',
+                                                            }}
+                                                        >
+                                                            {result.adapter}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: 16, textAlign: 'right' }}>
+                                                        {(() => {
+                                                            // Strip "(ids-based)" suffix to match LOC map keys
+                                                            const baseAdapterName =
+                                                                result.adapter.replace(
+                                                                    / \(ids-based\)$/,
+                                                                    '',
+                                                                );
+                                                            const loc =
+                                                                adapterLocMap[baseAdapterName];
+                                                            return loc ? (
+                                                                <span
+                                                                    style={{
+                                                                        fontFamily: 'monospace',
+                                                                        fontSize: '14px',
+                                                                        fontWeight: 600,
+                                                                        color: '#607D8B',
+                                                                        padding: '4px 8px',
+                                                                        background: '#f0f4ff',
+                                                                        borderRadius: '6px',
+                                                                    }}
+                                                                    title={`Lines of code: ${loc}`}
+                                                                >
+                                                                    {loc}
+                                                                </span>
+                                                            ) : (
+                                                                <span
+                                                                    style={{
+                                                                        color: '#999',
+                                                                        fontSize: '12px',
+                                                                    }}
+                                                                >
+                                                                    —
+                                                                </span>
+                                                            );
+                                                        })()}
+                                                    </td>
+                                                    <td style={{ padding: 16, textAlign: 'right' }}>
+                                                        <span
+                                                            style={{
+                                                                backgroundColor:
+                                                                    getScoreColor(score),
+                                                                color: 'white',
+                                                                padding: '6px 12px',
+                                                                borderRadius: '20px',
+                                                                fontSize: '13px',
+                                                                fontWeight: 700,
+                                                                display: 'inline-block',
+                                                                minWidth: 50,
+                                                                textAlign: 'center',
+                                                            }}
+                                                        >
+                                                            {formatNumber(score, 0)}
+                                                        </span>
+                                                    </td>
+                                                    <td
+                                                        style={{
+                                                            padding: 16,
+                                                            textAlign: 'right',
                                                             fontFamily: 'monospace',
                                                             fontSize: '14px',
-                                                            fontWeight: 600,
-                                                            color: '#607D8B',
-                                                            padding: '4px 8px',
-                                                            background: '#f0f4ff',
-                                                            borderRadius: '6px',
+                                                            position: 'relative',
                                                         }}
-                                                        title={`Lines of code: ${loc}`}
                                                     >
-                                                        {loc}
-                                                    </span>
-                                                ) : (
-                                                    <span
-                                                        style={{ color: '#999', fontSize: '12px' }}
-                                                    >
-                                                        —
-                                                    </span>
-                                                );
-                                            })()}
-                                        </td>
-                                        <td style={{ padding: 16, textAlign: 'right' }}>
-                                            <span
-                                                style={{
-                                                    backgroundColor: getScoreColor(score),
-                                                    color: 'white',
-                                                    padding: '6px 12px',
-                                                    borderRadius: '20px',
-                                                    fontSize: '13px',
-                                                    fontWeight: 700,
-                                                    display: 'inline-block',
-                                                    minWidth: 50,
-                                                    textAlign: 'center',
-                                                }}
-                                            >
-                                                {formatNumber(score, 0)}
-                                            </span>
-                                        </td>
-                                        <td
-                                            style={{
-                                                padding: 16,
-                                                textAlign: 'right',
-                                                fontFamily: 'monospace',
-                                                fontSize: '14px',
-                                                position: 'relative',
-                                            }}
-                                        >
-                                            <div
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'flex-end',
-                                                    gap: 8,
-                                                }}
-                                            >
-                                                {isBestExecution && filteredResults.length > 1 && (
-                                                    <span
+                                                        <div
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'flex-end',
+                                                                gap: 8,
+                                                            }}
+                                                        >
+                                                            {isBestExecution &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#4CAF50',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Best"
+                                                                    >
+                                                                        🏆
+                                                                    </span>
+                                                                )}
+                                                            {isWorstExecution &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#F44336',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Worst"
+                                                                    >
+                                                                        ⚠️
+                                                                    </span>
+                                                                )}
+                                                            <span
+                                                                style={{
+                                                                    color: isBestExecution
+                                                                        ? '#4CAF50'
+                                                                        : isWorstExecution
+                                                                          ? '#F44336'
+                                                                          : '#333',
+                                                                    fontWeight:
+                                                                        isBestExecution ||
+                                                                        isWorstExecution
+                                                                            ? 700
+                                                                            : 400,
+                                                                }}
+                                                            >
+                                                                {formatNumber(
+                                                                    result.average.executionTime,
+                                                                    1,
+                                                                )}
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td
                                                         style={{
-                                                            color: '#4CAF50',
-                                                            fontSize: '18px',
+                                                            padding: 16,
+                                                            textAlign: 'right',
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '14px',
                                                         }}
-                                                        title="Best"
                                                     >
-                                                        🏆
-                                                    </span>
-                                                )}
-                                                {isWorstExecution && filteredResults.length > 1 && (
-                                                    <span
+                                                        <div
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'flex-end',
+                                                                gap: 8,
+                                                            }}
+                                                        >
+                                                            {isBestRenders &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#4CAF50',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Best"
+                                                                    >
+                                                                        🏆
+                                                                    </span>
+                                                                )}
+                                                            {isWorstRenders &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#F44336',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Worst"
+                                                                    >
+                                                                        ⚠️
+                                                                    </span>
+                                                                )}
+                                                            <span
+                                                                style={{
+                                                                    color: isBestRenders
+                                                                        ? '#4CAF50'
+                                                                        : isWorstRenders
+                                                                          ? '#F44336'
+                                                                          : '#333',
+                                                                    fontWeight:
+                                                                        isBestRenders ||
+                                                                        isWorstRenders
+                                                                            ? 700
+                                                                            : 400,
+                                                                }}
+                                                            >
+                                                                {formatNumber(
+                                                                    result.average.renderCount,
+                                                                    0,
+                                                                )}
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td
                                                         style={{
-                                                            color: '#F44336',
-                                                            fontSize: '18px',
+                                                            padding: 16,
+                                                            textAlign: 'right',
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '14px',
                                                         }}
-                                                        title="Worst"
                                                     >
-                                                        ⚠️
-                                                    </span>
-                                                )}
-                                                <span
-                                                    style={{
-                                                        color: isBestExecution
-                                                            ? '#4CAF50'
-                                                            : isWorstExecution
-                                                              ? '#F44336'
-                                                              : '#333',
-                                                        fontWeight:
-                                                            isBestExecution || isWorstExecution
-                                                                ? 700
-                                                                : 400,
-                                                    }}
-                                                >
-                                                    {formatNumber(result.average.executionTime, 1)}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td
-                                            style={{
-                                                padding: 16,
-                                                textAlign: 'right',
-                                                fontFamily: 'monospace',
-                                                fontSize: '14px',
-                                            }}
-                                        >
-                                            <div
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'flex-end',
-                                                    gap: 8,
-                                                }}
-                                            >
-                                                {isBestRenders && filteredResults.length > 1 && (
-                                                    <span
+                                                        <div
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'flex-end',
+                                                                gap: 8,
+                                                            }}
+                                                        >
+                                                            {isBestMemory &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#4CAF50',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Best"
+                                                                    >
+                                                                        🏆
+                                                                    </span>
+                                                                )}
+                                                            {isWorstMemory &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#F44336',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Worst"
+                                                                    >
+                                                                        ⚠️
+                                                                    </span>
+                                                                )}
+                                                            <span
+                                                                style={{
+                                                                    color: isBestMemory
+                                                                        ? '#4CAF50'
+                                                                        : isWorstMemory
+                                                                          ? '#F44336'
+                                                                          : '#333',
+                                                                    fontWeight:
+                                                                        isBestMemory ||
+                                                                        isWorstMemory
+                                                                            ? 700
+                                                                            : 400,
+                                                                }}
+                                                            >
+                                                                {formatBytes(
+                                                                    result.average.memoryUsage *
+                                                                        1024 *
+                                                                        1024,
+                                                                )}
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td
                                                         style={{
-                                                            color: '#4CAF50',
-                                                            fontSize: '18px',
+                                                            padding: 16,
+                                                            textAlign: 'right',
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '14px',
                                                         }}
-                                                        title="Best"
                                                     >
-                                                        🏆
-                                                    </span>
-                                                )}
-                                                {isWorstRenders && filteredResults.length > 1 && (
-                                                    <span
+                                                        <div
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'flex-end',
+                                                                gap: 8,
+                                                            }}
+                                                        >
+                                                            {isBestFps &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#4CAF50',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Best"
+                                                                    >
+                                                                        🏆
+                                                                    </span>
+                                                                )}
+                                                            {isWorstFps &&
+                                                                scenarioResults.length > 1 && (
+                                                                    <span
+                                                                        style={{
+                                                                            color: '#F44336',
+                                                                            fontSize: '18px',
+                                                                        }}
+                                                                        title="Worst"
+                                                                    >
+                                                                        ⚠️
+                                                                    </span>
+                                                                )}
+                                                            <span
+                                                                style={{
+                                                                    color: isBestFps
+                                                                        ? '#4CAF50'
+                                                                        : isWorstFps
+                                                                          ? '#F44336'
+                                                                          : '#333',
+                                                                    fontWeight:
+                                                                        isBestFps || isWorstFps
+                                                                            ? 700
+                                                                            : 400,
+                                                                }}
+                                                            >
+                                                                {formatNumber(
+                                                                    result.average.fps,
+                                                                    1,
+                                                                )}
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td
                                                         style={{
-                                                            color: '#F44336',
-                                                            fontSize: '18px',
+                                                            padding: 16,
+                                                            textAlign: 'right',
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '14px',
+                                                            color: '#333',
                                                         }}
-                                                        title="Worst"
                                                     >
-                                                        ⚠️
-                                                    </span>
-                                                )}
-                                                <span
-                                                    style={{
-                                                        color: isBestRenders
-                                                            ? '#4CAF50'
-                                                            : isWorstRenders
-                                                              ? '#F44336'
-                                                              : '#333',
-                                                        fontWeight:
-                                                            isBestRenders || isWorstRenders
-                                                                ? 700
-                                                                : 400,
-                                                    }}
-                                                >
-                                                    {formatNumber(result.average.renderCount, 0)}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td
-                                            style={{
-                                                padding: 16,
-                                                textAlign: 'right',
-                                                fontFamily: 'monospace',
-                                                fontSize: '14px',
-                                            }}
-                                        >
-                                            <div
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'flex-end',
-                                                    gap: 8,
-                                                }}
-                                            >
-                                                {isBestMemory && filteredResults.length > 1 && (
-                                                    <span
+                                                        {formatNumber(
+                                                            result.average.latency.p50,
+                                                            2,
+                                                        )}
+                                                    </td>
+                                                    <td
                                                         style={{
-                                                            color: '#4CAF50',
-                                                            fontSize: '18px',
+                                                            padding: 16,
+                                                            textAlign: 'right',
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '14px',
+                                                            color: '#333',
                                                         }}
-                                                        title="Best"
                                                     >
-                                                        🏆
-                                                    </span>
-                                                )}
-                                                {isWorstMemory && filteredResults.length > 1 && (
-                                                    <span
+                                                        {formatNumber(
+                                                            result.average.latency.p95,
+                                                            2,
+                                                        )}
+                                                    </td>
+                                                    <td
                                                         style={{
-                                                            color: '#F44336',
-                                                            fontSize: '18px',
+                                                            padding: 16,
+                                                            textAlign: 'right',
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '14px',
+                                                            color: '#333',
                                                         }}
-                                                        title="Worst"
                                                     >
-                                                        ⚠️
-                                                    </span>
-                                                )}
-                                                <span
-                                                    style={{
-                                                        color: isBestMemory
-                                                            ? '#4CAF50'
-                                                            : isWorstMemory
-                                                              ? '#F44336'
-                                                              : '#333',
-                                                        fontWeight:
-                                                            isBestMemory || isWorstMemory
-                                                                ? 700
-                                                                : 400,
-                                                    }}
-                                                >
-                                                    {formatBytes(
-                                                        result.average.memoryUsage * 1024 * 1024,
-                                                    )}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td
-                                            style={{
-                                                padding: 16,
-                                                textAlign: 'right',
-                                                fontFamily: 'monospace',
-                                                fontSize: '14px',
-                                            }}
-                                        >
-                                            <div
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'flex-end',
-                                                    gap: 8,
-                                                }}
-                                            >
-                                                {isBestFps && filteredResults.length > 1 && (
-                                                    <span
-                                                        style={{
-                                                            color: '#4CAF50',
-                                                            fontSize: '18px',
-                                                        }}
-                                                        title="Best"
-                                                    >
-                                                        🏆
-                                                    </span>
-                                                )}
-                                                {isWorstFps && filteredResults.length > 1 && (
-                                                    <span
-                                                        style={{
-                                                            color: '#F44336',
-                                                            fontSize: '18px',
-                                                        }}
-                                                        title="Worst"
-                                                    >
-                                                        ⚠️
-                                                    </span>
-                                                )}
-                                                <span
-                                                    style={{
-                                                        color: isBestFps
-                                                            ? '#4CAF50'
-                                                            : isWorstFps
-                                                              ? '#F44336'
-                                                              : '#333',
-                                                        fontWeight:
-                                                            isBestFps || isWorstFps ? 700 : 400,
-                                                    }}
-                                                >
-                                                    {formatNumber(result.average.fps, 1)}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td
-                                            style={{
-                                                padding: 16,
-                                                textAlign: 'right',
-                                                fontFamily: 'monospace',
-                                                fontSize: '14px',
-                                                color: '#333',
-                                            }}
-                                        >
-                                            {formatNumber(result.average.latency.p50, 2)}
-                                        </td>
-                                        <td
-                                            style={{
-                                                padding: 16,
-                                                textAlign: 'right',
-                                                fontFamily: 'monospace',
-                                                fontSize: '14px',
-                                                color: '#333',
-                                            }}
-                                        >
-                                            {formatNumber(result.average.latency.p95, 2)}
-                                        </td>
-                                        <td
-                                            style={{
-                                                padding: 16,
-                                                textAlign: 'right',
-                                                fontFamily: 'monospace',
-                                                fontSize: '14px',
-                                                color: '#333',
-                                            }}
-                                        >
-                                            {formatNumber(result.average.latency.p99, 2)}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                    </tbody>
-                </table>
+                                                        {formatNumber(
+                                                            result.average.latency.p99,
+                                                            2,
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            })}
+
+            {/* Test Descriptions - Show all scenarios */}
+            <div style={{ marginTop: 64 }}>
+                <h2
+                    style={{
+                        margin: '0 0 32px 0',
+                        fontSize: '28px',
+                        fontWeight: 700,
+                        color: '#333',
+                        paddingBottom: '16px',
+                        borderBottom: '3px solid #667eea',
+                    }}
+                >
+                    📋 Test Descriptions
+                </h2>
+                {scenarios.map((scenario) => {
+                    const scenarioName = scenario
+                        .replace(/-/g, ' ')
+                        .replace(/\b\w/g, (l) => l.toUpperCase());
+
+                    return (
+                        <div
+                            key={scenario}
+                            style={{
+                                marginBottom: 40,
+                                padding: 24,
+                                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                borderRadius: '12px',
+                                border: '1px solid #e9ecef',
+                                color: 'white',
+                            }}
+                        >
+                            <h3
+                                style={{
+                                    margin: '0 0 20px 0',
+                                    fontSize: '20px',
+                                    fontWeight: 700,
+                                    color: 'white',
+                                }}
+                            >
+                                {scenarioName}
+                            </h3>
+                            <div
+                                style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                                    gap: 20,
+                                    fontSize: '14px',
+                                    lineHeight: 1.8,
+                                }}
+                            >
+                                <div>
+                                    <strong
+                                        style={{
+                                            display: 'block',
+                                            marginBottom: 8,
+                                            fontSize: '15px',
+                                        }}
+                                    >
+                                        🧪 What We Tested:
+                                    </strong>
+                                    {scenario === 'inline-editing' && (
+                                        <div style={{ opacity: 0.95 }}>
+                                            Simulates rapid text editing by performing 20
+                                            consecutive comment text updates with 16ms delays
+                                            between each keystroke. This test measures how well each
+                                            state management library handles frequent, rapid state
+                                            changes during user input. It evaluates reactivity,
+                                            input responsiveness, and whether the UI remains smooth
+                                            during fast typing scenarios.
+                                        </div>
+                                    )}
+                                    {scenario === 'bulk-update' && (
+                                        <div style={{ opacity: 0.95 }}>
+                                            Tests batch operations by performing 5 cycles of bulk
+                                            tag toggles on 10 cards, followed by background churn
+                                            operations. This test measures how efficiently each
+                                            library handles bulk state updates and batch processing
+                                            of multiple entities simultaneously. It evaluates the
+                                            library's ability to optimize batch operations and
+                                            minimize overhead when updating many items at once.
+                                        </div>
+                                    )}
+                                    {scenario === 'background-churn' && (
+                                        <div style={{ opacity: 0.95 }}>
+                                            Simulates continuous background updates with multiple
+                                            concurrent updates to different entities (decks, cards,
+                                            comments) happening simultaneously. This test measures
+                                            performance under sustained load and evaluates how well
+                                            each library handles update amplification - when a
+                                            single operation triggers multiple cascading updates
+                                            across the application state.
+                                        </div>
+                                    )}
+                                </div>
+                                <div>
+                                    <strong
+                                        style={{
+                                            display: 'block',
+                                            marginBottom: 8,
+                                            fontSize: '15px',
+                                        }}
+                                    >
+                                        📊 Test Data:
+                                    </strong>
+                                    <div style={{ opacity: 0.95 }}>
+                                        • 50 decks with 10 cards each (500 cards total)
+                                        <br />
+                                        • 2000 users
+                                        <br />
+                                        • 50 tags
+                                        <br />
+                                        • 3-5 comments per card (~1,500-2,500 comments)
+                                        <br />• Same dataset for all adapters (seed: 42)
+                                    </div>
+                                </div>
+                                <div>
+                                    <strong
+                                        style={{
+                                            display: 'block',
+                                            marginBottom: 8,
+                                            fontSize: '15px',
+                                        }}
+                                    >
+                                        🔬 Measurement Methodology:
+                                    </strong>
+                                    <div style={{ opacity: 0.95 }}>
+                                        • <strong>Runs:</strong> 10 iterations per adapter (100ms
+                                        pause between runs) for statistical accuracy. Warmup runs
+                                        are performed before measurements to stabilize JIT
+                                        compilation.
+                                        <br />• <strong>Execution Time:</strong> Total JavaScript
+                                        execution time measured via performance.now(), with
+                                        artificial delays (setTimeout, RAF overhead) subtracted.
+                                        Represents actual adapter processing time, not including
+                                        intentional test delays.
+                                        <br />• <strong>Memory:</strong> Peak memory usage during
+                                        test execution (baseline before test excluded). Memory is
+                                        measured multiple times per run using median for stability.
+                                        GC is forced before each run if available (Chrome DevTools).
+                                        <br />• <strong>FPS:</strong> Frame rate measured during
+                                        test execution using requestAnimationFrame counter. Higher
+                                        FPS indicates smoother rendering and better UI
+                                        responsiveness.
+                                        <br />• <strong>Renders:</strong> Total React component
+                                        re-renders tracked via render counter (reset before each
+                                        run). Lower render counts indicate better optimization and
+                                        fewer unnecessary updates.
+                                        <br />• <strong>Latency:</strong> Time from state update to
+                                        complete visual change, measured from update → React flush →
+                                        paint completion (double RAF). P50/P95/P99 percentiles
+                                        calculated across all measured operations using linear
+                                        interpolation.
+                                        <br />• <strong>Lines of Code (LOC):</strong> Total lines of
+                                        code required to implement each adapter, including all
+                                        boilerplate, selectors, and state management logic. Lower
+                                        LOC indicates simpler implementation and easier maintenance.
+                                        <br />• <strong>Fairness:</strong> Same dataset (seed: 42)
+                                        and identical workload for all adapters. Store creation and
+                                        initialization happen before measurements. Outlier removal
+                                        (IQR method) applied for samples with 7+ runs.
+                                        <br />• <strong>Statistics:</strong> Results show averages
+                                        (or medians for small samples) across all valid runs. Median
+                                        used for samples with less than 7 runs to handle outliers
+                                        better.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
 
-            {/* Summary removed */}
+            {/* Adapter Implementation Details */}
+            <div style={{ marginTop: 64 }}>
+                <h2
+                    style={{
+                        margin: '0 0 32px 0',
+                        fontSize: '28px',
+                        fontWeight: 700,
+                        color: '#333',
+                        paddingBottom: '16px',
+                        borderBottom: '3px solid #667eea',
+                    }}
+                >
+                    🔧 Adapter Implementation Details
+                </h2>
+                <p
+                    style={{
+                        marginBottom: 32,
+                        fontSize: '16px',
+                        color: '#666',
+                        lineHeight: 1.6,
+                    }}
+                >
+                    Understanding how each adapter is implemented helps explain the performance
+                    characteristics you see in the results above. Each library has different
+                    architectural approaches, optimization strategies, and trade-offs that affect
+                    execution time, memory usage, and render counts.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+                    {/* Redux Toolkit */}
+                    <div
+                        style={{
+                            padding: 24,
+                            background: 'linear-gradient(135deg, #8a5fb8 0%, #a57bc8 100%)',
+                            borderRadius: '12px',
+                            border: '1px solid #e9ecef',
+                            color: 'white',
+                        }}
+                    >
+                        <h3
+                            style={{
+                                margin: '0 0 16px 0',
+                                fontSize: '20px',
+                                fontWeight: 700,
+                                color: 'white',
+                            }}
+                        >
+                            Redux Toolkit (ids-based)
+                        </h3>
+                        <div style={{ fontSize: '14px', lineHeight: 1.8, opacity: 0.95 }}>
+                            <strong>Implementation Approach:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    Uses <code>createEntityAdapter</code> for normalized entity
+                                    management, which provides optimized CRUD operations
+                                </li>
+                                <li>
+                                    Built on top of <strong>Immer</strong> - all state updates go
+                                    through Immer's produce function, creating immutable updates
+                                    automatically
+                                </li>
+                                <li>
+                                    Uses <code>createSelector</code> with memoization for derived
+                                    data (selectors are memoized based on input dependencies)
+                                </li>
+                                <li>
+                                    Entity adapters handle indexing automatically - relationships
+                                    (cardIds per deck, commentIds per card) are maintained via
+                                    extraReducers and manual updates
+                                </li>
+                                <li>
+                                    React Redux uses <code>batch()</code> for batching multiple
+                                    updates in a single render cycle
+                                </li>
+                            </ul>
+                            <strong>Performance Characteristics:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    <strong>Immer overhead:</strong> Every state update creates a
+                                    draft proxy and produces a new immutable state tree, which adds
+                                    overhead but ensures immutability
+                                </li>
+                                <li>
+                                    <strong>Selector memoization:</strong> Memoized selectors
+                                    prevent unnecessary recalculations, but selector setup and
+                                    dependency tracking has its own cost
+                                </li>
+                                <li>
+                                    <strong>Entity adapter operations:</strong> Optimized for bulk
+                                    operations (setAll, updateMany), but individual updates still
+                                    traverse the normalized structure
+                                </li>
+                                <li>
+                                    <strong>Relationship maintenance:</strong> Manual updates to
+                                    deck.cardIds and card.commentIds require additional reducer
+                                    logic and can cause cascading updates
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    {/* Zustand */}
+                    <div
+                        style={{
+                            padding: 24,
+                            background: 'linear-gradient(135deg, #6bb8ff 0%, #8cc5ff 100%)',
+                            borderRadius: '12px',
+                            border: '1px solid #e9ecef',
+                            color: 'white',
+                        }}
+                    >
+                        <h3
+                            style={{
+                                margin: '0 0 16px 0',
+                                fontSize: '20px',
+                                fontWeight: 700,
+                                color: 'white',
+                            }}
+                        >
+                            Zustand (ids-based)
+                        </h3>
+                        <div style={{ fontSize: '14px', lineHeight: 1.8, opacity: 0.95 }}>
+                            <strong>Implementation Approach:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    <strong>No built-in list management:</strong> Zustand has no
+                                    entity adapter or collection utilities - all operations work
+                                    directly with plain JavaScript objects
+                                </li>
+                                <li>
+                                    Stores entities as simple <code>Record&lt;ID, Entity&gt;</code>{' '}
+                                    structures - each entity type is a flat object map
+                                </li>
+                                <li>
+                                    <strong>Manual relationship management:</strong> All indexes
+                                    (cardIds per deck, commentIds per card, etc.) must be manually
+                                    maintained and merged into entity objects
+                                </li>
+                                <li>
+                                    Updates require manual object spreading and merging - no
+                                    immutable update library, just plain JavaScript object
+                                    operations
+                                </li>
+                                <li>
+                                    Uses shallow equality checks for subscriptions to minimize
+                                    unnecessary re-renders
+                                </li>
+                            </ul>
+                            <strong>Performance Characteristics:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    <strong>Manual merging overhead:</strong> Every update requires
+                                    creating new objects with spread operators, which can be
+                                    expensive for nested structures
+                                </li>
+                                <li>
+                                    <strong>Index maintenance:</strong> Relationship indexes
+                                    (cardIds, commentIds) are stored directly on entities, so
+                                    updating a card requires updating its parent deck's cardIds
+                                    array - this creates cascading update operations
+                                </li>
+                                <li>
+                                    <strong>No automatic optimization:</strong> Without entity
+                                    adapters, there's no built-in optimization for bulk operations -
+                                    each update is processed individually
+                                </li>
+                                <li>
+                                    <strong>Shallow equality checks:</strong> Reduces unnecessary
+                                    re-renders but requires careful selector design to avoid deep
+                                    equality checks
+                                </li>
+                                <li>
+                                    <strong>Lower abstraction overhead:</strong> Less abstraction
+                                    means less overhead, but more manual work and potential for
+                                    performance issues if not carefully optimized
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    {/* Effector */}
+                    <div
+                        style={{
+                            padding: 24,
+                            background: 'linear-gradient(135deg, #4dd9da 0%, #6ee3e4 100%)',
+                            borderRadius: '12px',
+                            border: '1px solid #e9ecef',
+                            color: 'white',
+                        }}
+                    >
+                        <h3
+                            style={{
+                                margin: '0 0 16px 0',
+                                fontSize: '20px',
+                                fontWeight: 700,
+                                color: 'white',
+                            }}
+                        >
+                            Effector (ids-based)
+                        </h3>
+                        <div style={{ fontSize: '14px', lineHeight: 1.8, opacity: 0.95 }}>
+                            <strong>Implementation Approach:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    Uses <strong>fine-grained reactivity</strong> with stores and
+                                    events - each entity type has its own store
+                                </li>
+                                <li>
+                                    Stores are combined using <code>combine()</code> for derived
+                                    state - creates new stores that reactively update when source
+                                    stores change
+                                </li>
+                                <li>
+                                    <strong>Manual index management:</strong> Similar to Zustand,
+                                    relationships (cardIds, commentIds) are manually maintained and
+                                    stored directly on entities
+                                </li>
+                                <li>
+                                    Updates are handled via events - each update operation creates
+                                    an event that modifies stores
+                                </li>
+                                <li>
+                                    Uses <code>useStoreMap</code> for efficient component
+                                    subscriptions - only subscribes to specific store values
+                                </li>
+                            </ul>
+                            <strong>Performance Characteristics:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    <strong>Reactive graph overhead:</strong> The dependency graph
+                                    between stores must be maintained and evaluated, which adds
+                                    overhead for complex relationships
+                                </li>
+                                <li>
+                                    <strong>Event system:</strong> Every update goes through the
+                                    event system, which provides observability but adds a layer of
+                                    indirection
+                                </li>
+                                <li>
+                                    <strong>Store combination:</strong> Combined stores create new
+                                    derived stores, which can lead to multiple store updates for a
+                                    single operation
+                                </li>
+                                <li>
+                                    <strong>Fine-grained subscriptions:</strong> useStoreMap allows
+                                    precise subscriptions, but setting up these subscriptions has a
+                                    cost
+                                </li>
+                                <li>
+                                    <strong>Manual index updates:</strong> Like Zustand, requires
+                                    manual object merging for relationship maintenance, with
+                                    additional overhead from the reactive system
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    {/* Cnstra + OIMDB */}
+                    <div
+                        style={{
+                            padding: 24,
+                            background: 'linear-gradient(135deg, #7c8ef0 0%, #9aa5f5 100%)',
+                            borderRadius: '12px',
+                            border: '1px solid #e9ecef',
+                            color: 'white',
+                        }}
+                    >
+                        <h3
+                            style={{
+                                margin: '0 0 16px 0',
+                                fontSize: '20px',
+                                fontWeight: 700,
+                                color: 'white',
+                            }}
+                        >
+                            Cnstra + OIMDB (ids-based)
+                        </h3>
+                        <div style={{ fontSize: '14px', lineHeight: 1.8, opacity: 0.95 }}>
+                            <strong>Implementation Approach:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    Uses <strong>OIMDB reactive collections</strong> - specialized
+                                    data structures designed for normalized entity management
+                                </li>
+                                <li>
+                                    <strong>Automatic index management:</strong> Reactive indexes
+                                    (cardsByDeck, commentsByCard, etc.) are automatically maintained
+                                    by the collection system - no manual relationship updates needed
+                                </li>
+                                <li>
+                                    Built on <strong>CNS (Central Nervous System)</strong> core -
+                                    provides reactive state management with fine-grained dependency
+                                    tracking
+                                </li>
+                                <li>
+                                    Uses <code>OIMReactiveIndexManual</code> for indexing - indexes
+                                    are updated automatically when entities change, without manual
+                                    merge operations
+                                </li>
+                                <li>
+                                    Collections provide optimized bulk operations (
+                                    <code>upsertMany</code>, <code>updateMany</code>) that are
+                                    designed for performance
+                                </li>
+                                <li>
+                                    React hooks (<code>useSelectEntityByPk</code>,{' '}
+                                    <code>useSelectPksByIndexKey</code>) provide direct access to
+                                    entities and indexes without intermediate selectors
+                                </li>
+                            </ul>
+                            <strong>Performance Characteristics:</strong>
+                            <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                                <li>
+                                    <strong>Automatic index updates:</strong> Indexes are maintained
+                                    automatically by the collection system, eliminating manual merge
+                                    operations and reducing cascading update overhead
+                                </li>
+                                <li>
+                                    <strong>Optimized data structures:</strong> Collections are
+                                    designed specifically for entity management, with internal
+                                    optimizations for common operations
+                                </li>
+                                <li>
+                                    <strong>Direct entity access:</strong> No selector layer needed
+                                    - hooks provide direct access to entities and indexes, reducing
+                                    abstraction overhead
+                                </li>
+                                <li>
+                                    <strong>Bulk operation optimization:</strong> Bulk operations
+                                    are handled internally by collections, with optimizations for
+                                    batch updates
+                                </li>
+                                <li>
+                                    <strong>Event queue system:</strong> Updates go through an event
+                                    queue, allowing for batching and optimization of multiple
+                                    operations
+                                </li>
+                                <li>
+                                    <strong>Reduced manual work:</strong> Less boilerplate and
+                                    manual relationship management means fewer opportunities for
+                                    performance issues from suboptimal update patterns
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        marginTop: 32,
+                        padding: 20,
+                        background: '#f8f9fa',
+                        borderRadius: '12px',
+                        border: '1px solid #e9ecef',
+                    }}
+                >
+                    <strong style={{ display: 'block', marginBottom: 12, fontSize: '16px' }}>
+                        💡 Key Insights:
+                    </strong>
+                    <div style={{ fontSize: '14px', lineHeight: 1.8, color: '#666' }}>
+                        <p style={{ marginBottom: 12 }}>
+                            The performance differences you see in the results are primarily due to:
+                        </p>
+                        <ul style={{ margin: '8px 0', paddingLeft: 24, listStyle: 'disc' }}>
+                            <li>
+                                <strong>Abstraction vs. Performance:</strong> Libraries with more
+                                abstraction (Redux Toolkit, Effector) may have more overhead but
+                                provide more features. Libraries with less abstraction (Zustand)
+                                require more manual work but can be faster if optimized correctly.
+                            </li>
+                            <li>
+                                <strong>Index Maintenance:</strong> Manual relationship management
+                                (Zustand, Effector) requires more operations and can cause cascading
+                                updates. Automatic index maintenance (Cnstra + OIMDB) reduces
+                                overhead.
+                            </li>
+                            <li>
+                                <strong>Update Patterns:</strong> Immer (Redux Toolkit) creates
+                                immutable updates automatically but has overhead. Manual merging
+                                (Zustand) is faster but error-prone. Reactive collections (Cnstra +
+                                OIMDB) optimize updates automatically.
+                            </li>
+                            <li>
+                                <strong>Bulk Operations:</strong> Some libraries (Redux Toolkit,
+                                Cnstra + OIMDB) have built-in optimizations for bulk operations,
+                                while others require manual optimization.
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 };

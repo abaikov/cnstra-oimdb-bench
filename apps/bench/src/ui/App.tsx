@@ -1,23 +1,12 @@
-import React, {
-    useMemo,
-    useRef,
-    useState,
-    useContext,
-    createContext,
-    useCallback,
-    useEffect,
-} from 'react';
+import React, { useMemo, useState, useContext, createContext, useCallback, useEffect } from 'react';
 import {
     generateDataset,
-    createFpsMeter,
-    createMarks,
     createRenderCounter,
     testAllAdapters,
     type AdapterTestResult,
+    type BenchmarkResult,
 } from '@bench/core';
-import type { StoreAdapter, RootState, ID, Deck, Card, Comment } from '@bench/core';
-import { createWorkloadDriver } from '@bench/core';
-import { FpsGauge, KeystrokeLatency, MountProfiler } from './Overlays';
+import type { StoreAdapter, RootState, ID, Card, Comment } from '@bench/core';
 import { BenchmarkResults } from './BenchmarkResults';
 import { DebugRenders } from './DebugRenders';
 import * as styles from './App.styles';
@@ -25,19 +14,11 @@ import { cnstraOimdbAdapter } from '@bench/adapter-cnstra-oimdb';
 import { reduxAdapter } from '@bench/adapter-redux';
 import { effectorAdapter } from '@bench/adapter-effector';
 import { zustandAdapter } from '@bench/adapter-zustand';
-import adapterLocData from '@bench/core/src/adapter-loc.json';
+import { createBenchmarkRunner, calculateMedian } from './benchmarkRunner';
 
 const AdapterContext = createContext<{ adapter: StoreAdapter; actions: any } | null>(null);
 
 // All components use ids-based mode
-
-// Load adapter lines of code data
-const adapterLocMap: Record<string, number> = {};
-if (adapterLocData && adapterLocData.adapters) {
-    Object.entries(adapterLocData.adapters).forEach(([name, data]: [string, any]) => {
-        adapterLocMap[name] = data.linesOfCode;
-    });
-}
 
 // Create adapters - only ids-based versions
 const adapters: StoreAdapter[] = [
@@ -49,7 +30,6 @@ const adapters: StoreAdapter[] = [
 
 // Global render counter for non-benchmark renders (UI components)
 const globalRenderCounter = createRenderCounter();
-const overlaysEnabled = new URLSearchParams(window.location.search).get('overlays') === '1';
 const isDev = import.meta.env.DEV;
 const debugLog = isDev ? console.log.bind(console) : () => {};
 const debugWarn = isDev ? console.warn.bind(console) : () => {};
@@ -57,482 +37,12 @@ const debugWarn = isDev ? console.warn.bind(console) : () => {};
 // Context for benchmark-specific render counter
 const RenderCounterContext = createContext<ReturnType<typeof createRenderCounter> | null>(null);
 
-// Local benchmark types and functions
-type BenchmarkMetrics = {
-    executionTime: number;
-    renderCount: number;
-    memoryUsage: number;
-    fps: number;
-    latency: number[];
-    timestamp: number;
-    adapter: string;
-    scenario: string;
-};
-
-type BenchmarkResult = {
-    scenario: string;
-    adapter: string;
-    runs: BenchmarkMetrics[];
-    average: {
-        executionTime: number;
-        renderCount: number;
-        memoryUsage: number;
-        fps: number;
-        latency: {
-            p50: number;
-            p95: number;
-            p99: number;
-        };
-    };
-    timestamp: number;
-};
-
-/**
- * Get memory usage in MB
- * Note: performance.memory is a non-standard Chrome API
- * Returns 0 if not available (e.g., Firefox, Safari)
- */
-function getMemoryUsage(): number {
-    if ('memory' in performance && (performance as any).memory) {
-        const memory = (performance as any).memory;
-        const used = memory.usedJSHeapSize;
-        if (typeof used === 'number' && Number.isFinite(used) && used >= 0) {
-            return used / 1024 / 1024; // MB
-        }
-    }
-    return 0;
-}
-
-/**
- * Calculate percentile using linear interpolation for more accurate results
- * Handles edge cases: empty arrays, single values, out-of-range percentiles
- */
-function calculatePercentile(values: number[], percentile: number): number {
-    if (!values || values.length === 0) return 0;
-    if (values.length === 1) return values[0];
-
-    // Clamp percentile to valid range
-    percentile = Math.max(0, Math.min(100, percentile));
-
-    const sorted = [...values].sort((a, b) => a - b);
-    const index = (percentile / 100) * (sorted.length - 1);
-    const lowerIndex = Math.floor(index);
-    const upperIndex = Math.ceil(index);
-    const weight = index - lowerIndex;
-
-    // Linear interpolation for more accurate percentile
-    const lower = sorted[Math.max(0, Math.min(lowerIndex, sorted.length - 1))];
-    const upper = sorted[Math.max(0, Math.min(upperIndex, sorted.length - 1))];
-
-    const result = lower + (upper - lower) * weight;
-    return Number.isFinite(result) ? result : 0;
-}
-
-function createBenchmarkRunner() {
-    const results: BenchmarkResult[] = [];
-
-    return {
-        async runBenchmark(
-            scenario: string,
-            adapter: string,
-            workloadFn: (
-                measureLatency: (
-                    fn: () => void | Promise<void>,
-                    waitForPaint?: boolean,
-                ) => Promise<number>,
-                runNum: number,
-                trackDelay?: (ms: number) => void,
-            ) => Promise<void>,
-            runs: number = 10,
-        ): Promise<BenchmarkResult> {
-            const scenarioResults: BenchmarkMetrics[] = [];
-
-            // Warmup run(s) to allow JIT compilation and stabilize results
-            // Note: Warmup runs may create side-effects (state changes), but this is acceptable
-            // as it simulates real-world usage where adapters are "warmed up" before critical operations
-            const warmupRuns = 1;
-            for (let w = 0; w < warmupRuns; w++) {
-                try {
-                    // Test if workloadFn accepts measureLatency parameter
-                    if (workloadFn.length > 0) {
-                        // For warmup, pass a dummy measureLatency that does nothing
-                        const dummyMeasureLatency = async () => 0;
-                        const dummyTrackDelay = () => {}; // Don't track delays in warmup
-                        try {
-                            await (workloadFn as any)(dummyMeasureLatency, 0, dummyTrackDelay);
-                        } catch {
-                            try {
-                                await (workloadFn as any)(dummyMeasureLatency);
-                            } catch {
-                                // If it fails, try without any parameters
-                                await (workloadFn as () => Promise<void>)();
-                            }
-                        }
-                    } else {
-                        await (workloadFn as () => Promise<void>)();
-                    }
-                } catch (error) {
-                    debugWarn('Warmup run failed:', error);
-                }
-                // Wait between warmup runs to allow state to stabilize
-                await new Promise((resolve) => setTimeout(resolve, 100));
-            }
-
-            for (let i = 0; i < runs; i++) {
-                // Create a NEW render counter for each run to ensure isolation
-                // This prevents accumulation across runs and ensures accurate counts
-                const runRenderCounter = createRenderCounter();
-                const fpsMeter = createFpsMeter();
-                const latencies: number[] = [];
-
-                // Track artificial delays to subtract from executionTime
-                let artificialDelayMs = 0;
-
-                // Force garbage collection if available (Chrome DevTools only)
-                // Wait longer and measure multiple times for stability
-                if ('gc' in window && typeof (window as any).gc === 'function') {
-                    (window as any).gc();
-                    await new Promise((resolve) => setTimeout(resolve, 150));
-                    // Take multiple memory samples and use median for stability
-                    const memorySamples: number[] = [];
-                    for (let s = 0; s < 3; s++) {
-                        memorySamples.push(getMemoryUsage());
-                        await new Promise((resolve) => setTimeout(resolve, 10));
-                    }
-                }
-
-                // Start measurements
-                // NOTE: FPS meter will be started AFTER workload begins to avoid counting cold frames
-                // Measure memory multiple times and use median (excluded from executionTime)
-                const startMemorySamples: number[] = [];
-                for (let s = 0; s < 3; s++) {
-                    startMemorySamples.push(getMemoryUsage());
-                    await new Promise((resolve) => setTimeout(resolve, 5));
-                }
-                startMemorySamples.sort((a, b) => a - b);
-                const startMemory = startMemorySamples[Math.floor(startMemorySamples.length / 2)]; // median
-                const startTime = performance.now();
-
-                // Helper to measure individual operation latency
-                // Mode 1: With RAF wait (for visual latency measurement)
-                // Mode 2: Without RAF wait (for state update speed measurement - reveals adapter differences)
-                const measureLatency = async (
-                    fn: () => void | Promise<void>,
-                    waitForPaint: boolean = true,
-                ): Promise<number> => {
-                    const start = performance.now();
-
-                    try {
-                        // Call the state update
-                        await fn();
-
-                        if (waitForPaint) {
-                            // Wait for:
-                            // 1. React to flush all synchronous updates (microtask queue)
-                            // 2. Browser to schedule and execute the paint (RAF)
-                            // This gives us the actual latency from update to visual change
-                            const waitStart = performance.now();
-                            await new Promise<void>((resolve) => {
-                                // Microtask ensures all React updates are flushed synchronously
-                                Promise.resolve().then(() => {
-                                    // Double RAF to ensure paint is complete
-                                    requestAnimationFrame(() => {
-                                        requestAnimationFrame(() => {
-                                            resolve();
-                                        });
-                                    });
-                                });
-                            });
-                            // Subtract only expected scheduling/paint overhead (cap to ~2 frames)
-                            const schedWait = performance.now() - waitStart;
-                            const capMs = 34; // ~2 frames at 60Hz
-                            artificialDelayMs += Math.min(Math.max(0, schedWait), capMs);
-                        } else {
-                            // Wait for React to flush updates (at least one microtask + one RAF)
-                            // This ensures state updates are processed even if we don't wait for paint
-                            const waitStart = performance.now();
-                            await new Promise<void>((resolve) => {
-                                Promise.resolve().then(() => {
-                                    requestAnimationFrame(() => {
-                                        resolve();
-                                    });
-                                });
-                            });
-                            // Subtract only nominal scheduling wait (cap to ~1 frame)
-                            const schedWait = performance.now() - waitStart;
-                            const capMs = 17; // ~1 frame at 60Hz
-                            artificialDelayMs += Math.min(Math.max(0, schedWait), capMs);
-                        }
-                    } catch (error) {
-                        debugWarn('Error in measureLatency:', error);
-                    }
-
-                    const latency = performance.now() - start;
-                    if (Number.isFinite(latency) && latency >= 0 && latency < 1_000_000) {
-                        latencies.push(latency);
-                    }
-                    return latency;
-                };
-
-                // Wrap workload execution with render counter context
-                // This ensures only renders during workload are counted
-                const workloadWithContext = async () => {
-                    // Start FPS meter AFTER counter is set up, just before real work begins
-                    fpsMeter.start();
-
-                    // Run workload - always pass measureLatency, runNum, and trackDelay
-                    await workloadFn(measureLatency, i, (ms) => {
-                        artificialDelayMs += ms;
-                    });
-                };
-
-                // Execute workload - render counter is set via global variable so useCounterKey can access it
-                // Use unique key per run to avoid race conditions
-                const benchmarkCounterKey = `__benchmarkRenderCounter_${Date.now()}_${i}_${Math.random()}`;
-                (window as any)[benchmarkCounterKey] = runRenderCounter;
-
-                let workloadError: Error | null = null;
-                let measuredFps = 0;
-                let fpsStopped = false;
-                try {
-                    await workloadWithContext();
-                } catch (error) {
-                    workloadError = error instanceof Error ? error : new Error(String(error));
-                    throw error;
-                } finally {
-                    // Always stop FPS meter if it wasn't stopped yet (handles errors too)
-                    if (!fpsStopped) {
-                        try {
-                            measuredFps = fpsMeter.stop();
-                            fpsStopped = true;
-                        } catch (e) {
-                            debugWarn('Error stopping FPS meter:', e);
-                        }
-                    }
-                    // Clean up counter reference
-                    delete (window as any)[benchmarkCounterKey];
-                }
-
-                // Wait for React to finish rendering all updates before measuring
-                // This ensures all renders are counted
-                await new Promise<void>((resolve) => {
-                    Promise.resolve().then(() => {
-                        requestAnimationFrame(() => {
-                            requestAnimationFrame(() => {
-                                resolve();
-                            });
-                        });
-                    });
-                });
-
-                // Measure end memory BEFORE stopping measurements to avoid adding delay to executionTime
-                // Measure multiple times and use median for stability
-                const endMemorySamples: number[] = [];
-                for (let s = 0; s < 3; s++) {
-                    endMemorySamples.push(getMemoryUsage());
-                    if (s < 2) {
-                        // Small delay between samples, but this happens BEFORE endTime
-                        await new Promise((resolve) => setTimeout(resolve, 2));
-                    }
-                }
-                endMemorySamples.sort((a, b) => a - b);
-                const endMemory = endMemorySamples[Math.floor(endMemorySamples.length / 2)]; // median
-
-                // Now measure end time after all measurements are done
-                const endTime = performance.now();
-                if (!fpsStopped) {
-                    measuredFps = fpsMeter.stop();
-                    fpsStopped = true;
-                }
-
-                // Calculate actual execution time by subtracting artificial delays
-                const rawExecutionTime = endTime - startTime;
-                const actualExecutionTime = Math.max(0, rawExecutionTime - artificialDelayMs);
-
-                // Important: executionTime includes ALL time including await delays and setTimeout
-                // FPS measures frame rate during the entire execution period
-                // High FPS means smooth rendering (many frames rendered), but executionTime
-                // can still be higher if the workload includes intentional delays (like setTimeout(50))
-                // This is CORRECT behavior:
-                // - FPS = rendering smoothness/quality (higher is better)
-                // - ExecutionTime = total operation duration including all waits (lower is better)
-                // Example: A test with setTimeout(50) will have executionTime >= 50ms,
-                // but can still have high FPS if rendering is smooth during that time
-
-                // Memory measurement: We measure the CHANGE in memory during workload execution,
-                // not the total memory footprint. This shows:
-                // - Redux: Higher overhead from action objects, selector caches
-                // - Zustand: Minimal overhead, direct state updates
-                // Note: Store creation happens BEFORE measurements, so baseline memory is excluded
-                const rawRenderCount = Object.values(runRenderCounter.get()).reduce(
-                    (a, b) => a + b,
-                    0,
-                );
-                // Use absolute values to avoid negative memory (due to GC)
-                // Report peak memory usage, not delta
-                const rawMemory = Math.max(0, endMemory - startMemory);
-                const validatedLatencies = latencies.filter(
-                    (l) => Number.isFinite(l) && l >= 0 && l < 1_000_000, // Sanity check: < 1 second
-                );
-
-                // Validate all metrics
-                if (actualExecutionTime < 0 || !Number.isFinite(actualExecutionTime)) {
-                    debugWarn(
-                        `Invalid executionTime: ${actualExecutionTime}, using raw: ${rawExecutionTime}`,
-                    );
-                }
-
-                const metrics: BenchmarkMetrics = {
-                    executionTime:
-                        Number.isFinite(actualExecutionTime) && actualExecutionTime >= 0
-                            ? actualExecutionTime
-                            : Math.max(0, rawExecutionTime - artificialDelayMs),
-                    renderCount:
-                        Number.isFinite(rawRenderCount) && rawRenderCount >= 0
-                            ? Math.round(rawRenderCount)
-                            : 0,
-                    memoryUsage:
-                        Number.isFinite(rawMemory) && rawMemory >= 0 && rawMemory < 10000
-                            ? rawMemory
-                            : endMemory > 0
-                              ? endMemory
-                              : 0, // Use endMemory if delta is invalid
-                    fps:
-                        Number.isFinite(measuredFps) && measuredFps >= 0 && measuredFps <= 1000
-                            ? measuredFps
-                            : 0,
-                    latency: validatedLatencies,
-                    timestamp: Date.now(),
-                    adapter,
-                    scenario,
-                };
-
-                scenarioResults.push(metrics);
-
-                // Wait between runs
-                await new Promise((resolve) => setTimeout(resolve, 100));
-            }
-
-            // Helper function to calculate median (more robust for small samples)
-            function calculateMedian(values: number[]): number {
-                if (values.length === 0) return 0;
-                if (values.length === 1) return values[0];
-                const sorted = [...values].sort((a, b) => a - b);
-                const mid = Math.floor(sorted.length / 2);
-                return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-            }
-
-            // Helper function to remove outliers using IQR method
-            // Only use for larger samples (>=7), otherwise use all values or median
-            function removeOutliers(values: number[]): number[] {
-                if (values.length < 7) {
-                    // For small samples, don't remove outliers - use all values
-                    // The median calculation will handle outliers naturally
-                    return values;
-                }
-                const sorted = [...values].sort((a, b) => a - b);
-                const q1Index = Math.floor(sorted.length * 0.25);
-                const q3Index = Math.floor(sorted.length * 0.75);
-                const q1 = sorted[q1Index];
-                const q3 = sorted[q3Index];
-                const iqr = q3 - q1;
-                // Use a more conservative bound (2.0 * IQR instead of 1.5) to avoid removing too many values
-                const lowerBound = q1 - 2.0 * iqr;
-                const upperBound = q3 + 2.0 * iqr;
-                return values.filter((v) => v >= lowerBound && v <= upperBound);
-            }
-
-            // Validate that we have enough valid results
-            const validResults = scenarioResults.filter(
-                (r) =>
-                    Number.isFinite(r.executionTime) &&
-                    Number.isFinite(r.renderCount) &&
-                    Number.isFinite(r.fps),
-            );
-
-            if (validResults.length < 3) {
-                debugWarn(
-                    `Warning: Only ${validResults.length} valid results out of ${scenarioResults.length} runs for ${scenario}/${adapter}. Results may be unreliable.`,
-                );
-            }
-
-            // For small samples, use median (more robust to outliers)
-            // For larger samples, use mean after outlier removal
-            const useMedian = validResults.length < 7;
-
-            // Calculate averages with outlier removal for execution time and render count
-            const executionTimesRaw = validResults.map((r) => r.executionTime);
-            const renderCountsRaw = validResults.map((r) => r.renderCount);
-            const executionTimes = useMedian
-                ? executionTimesRaw
-                : removeOutliers(executionTimesRaw);
-            const renderCounts = useMedian ? renderCountsRaw : removeOutliers(renderCountsRaw);
-
-            const memoryUsages = validResults
-                .map((r) => r.memoryUsage)
-                .filter((m) => Number.isFinite(m));
-            const fpsValues = validResults
-                .map((r) => r.fps)
-                .filter((f) => Number.isFinite(f) && f >= 0 && f <= 1000);
-            const allLatencies = validResults
-                .flatMap((r) => r.latency)
-                .filter((l) => Number.isFinite(l) && l >= 0);
-
-            const average: BenchmarkResult['average'] = {
-                executionTime:
-                    executionTimes.length > 0
-                        ? useMedian
-                            ? calculateMedian(executionTimes)
-                            : executionTimes.reduce((sum, r) => sum + r, 0) / executionTimes.length
-                        : 0,
-                renderCount:
-                    renderCounts.length > 0
-                        ? useMedian
-                            ? calculateMedian(renderCounts)
-                            : renderCounts.reduce((sum, r) => sum + r, 0) / renderCounts.length
-                        : 0,
-                memoryUsage:
-                    memoryUsages.length > 0
-                        ? memoryUsages.reduce((sum, r) => sum + r, 0) / memoryUsages.length
-                        : 0,
-                fps:
-                    fpsValues.length > 0
-                        ? fpsValues.reduce((sum, r) => sum + r, 0) / fpsValues.length
-                        : 0,
-                latency: {
-                    p50: allLatencies.length >= 1 ? calculatePercentile(allLatencies, 50) : 0,
-                    p95: allLatencies.length >= 2 ? calculatePercentile(allLatencies, 95) : 0,
-                    p99: allLatencies.length >= 3 ? calculatePercentile(allLatencies, 99) : 0,
-                },
-            };
-
-            const result: BenchmarkResult = {
-                scenario,
-                adapter,
-                runs: scenarioResults,
-                average,
-                timestamp: Date.now(),
-            };
-
-            results.push(result);
-            return result;
-        },
-
-        getResults(): BenchmarkResult[] {
-            return [...results];
-        },
-
-        clearResults() {
-            results.length = 0;
-        },
-
-        compareResults(scenario: string): BenchmarkResult[] {
-            return results.filter((r) => r.scenario === scenario);
-        },
-    };
-}
-
-const benchmarkRunner = createBenchmarkRunner();
+// Create benchmark runner instance with debug logging
+const benchmarkRunner = createBenchmarkRunner({
+    debugWarn,
+    runs: 10,
+    warmupRuns: 1,
+});
 
 /**
  * Convert benchmark result to standardized format for expert requirements
@@ -593,17 +103,6 @@ function convertToStandardizedFormat(
     };
 }
 
-/**
- * Calculate median (helper function)
- */
-function calculateMedian(values: number[]): number {
-    if (values.length === 0) return 0;
-    if (values.length === 1) return values[0];
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
 function useCounterKey(name: string) {
     // Check for benchmark-specific render counter (set during benchmark execution)
     // Search for the most recent benchmark counter key
@@ -637,74 +136,6 @@ function useCounterKey(name: string) {
     counter.increment(name);
 }
 
-// Component for rendering card preview in ids-based mode
-const CardPreviewById: React.FC<{ adapter: StoreAdapter; cardId: ID }> = ({ adapter, cardId }) => {
-    const card = (adapter.hooks as any).useCardById(cardId);
-    if (!card) return null;
-    return <CardPreview adapter={adapter} card={card} />;
-};
-
-// DeckRowBase for ids-based mode
-const DeckRowBase: React.FC<{
-    adapter: StoreAdapter;
-    deckId: string;
-    style: React.CSSProperties;
-}> = ({ adapter, deckId, style }) => {
-    useCounterKey('DeckRow');
-    const deck = adapter.hooks.useDeckById(deckId);
-    const cardIds = (adapter.hooks as any).useCardIdsByDeckId(deckId) as ID[];
-
-    if (!deck) {
-        return <div style={style}>Loading...</div>;
-    }
-
-    return (
-        <div style={styles.deckRowStyles.container(style)}>
-            <div style={styles.deckRowStyles.header}>
-                <strong>{deck.title}</strong>
-                <small>{cardIds.length} cards</small>
-            </div>
-            <div style={styles.deckRowStyles.cardsContainer}>
-                {cardIds.slice(0, 10).map((cardId) => (
-                    <CardPreviewById key={cardId} adapter={adapter} cardId={cardId} />
-                ))}
-            </div>
-        </div>
-    );
-};
-const DeckRow = DeckRowBase;
-
-// Component for rendering comment in ids-based mode
-const CommentPreviewById: React.FC<{ adapter: StoreAdapter; commentId: ID }> = ({
-    adapter,
-    commentId,
-}) => {
-    const comment = (adapter.hooks as any).useCommentById(commentId);
-    if (!comment) return null;
-    return <div style={styles.cardPreviewStyles.comment}>{comment.text}</div>;
-};
-
-// CardPreviewBase for ids-based mode
-const CardPreviewBase: React.FC<{ adapter: StoreAdapter; card: Card }> = ({ adapter, card }) => {
-    useCounterKey('CardPreview');
-    const commentIds = (adapter.hooks as any).useCommentIdsByCardId(card.id) as ID[];
-
-    return (
-        <div style={styles.cardPreviewStyles.container}>
-            <div>
-                <strong>{card.title}</strong>
-            </div>
-            <div style={styles.cardPreviewStyles.description}>{card.description}</div>
-            <div style={styles.cardPreviewStyles.commentsContainer}>
-                {commentIds.slice(0, 2).map((commentId) => (
-                    <CommentPreviewById key={commentId} adapter={adapter} commentId={commentId} />
-                ))}
-            </div>
-        </div>
-    );
-};
-const CardPreview = CardPreviewBase;
-
 // Define component implementations first
 // CardItem for ids-based mode - receives cardId and uses selectors
 const CardItemBase: React.FC<{ cardId: string }> = ({ cardId }) => {
@@ -712,8 +143,8 @@ const CardItemBase: React.FC<{ cardId: string }> = ({ cardId }) => {
     const ctx = useContext(AdapterContext);
     if (!ctx) throw new Error('Adapter context not found');
 
-    const card = (ctx.adapter.hooks as any).useCardById(cardId) as Card | undefined;
-    const commentIds = (ctx.adapter.hooks as any).useCommentIdsByCardId(cardId) as ID[];
+    const card = ctx.adapter.hooks.useCardById(cardId) as Card | undefined;
+    const commentIds = ctx.adapter.hooks.useCommentIdsByCardId(cardId) as ID[];
 
     if (!card) return <div>Loading card...</div>;
     // Read updatedAt to ensure UI depends on the field mutated in bulk updates
@@ -748,14 +179,13 @@ const CommentsListBase: React.FC<{ commentIds: ID[] }> = ({ commentIds }) => {
     return (
         <div style={styles.commentsListStyles.container}>
             {commentIds.map((commentId) => (
-                <CommentItemBase key={commentId} commentId={commentId} />
+                <CommentItem key={commentId} commentId={commentId} />
             ))}
         </div>
     );
 };
 
-// CommentItem for ids-based mode - receives commentId and fetches via selector
-const CommentItemBase: React.FC<{ commentId: string }> = ({ commentId }) => {
+const CommentItem: React.FC<{ commentId: string }> = ({ commentId }) => {
     useCounterKey('CommentItem');
     const ctx = useContext(AdapterContext);
     if (!ctx) throw new Error('Adapter context not found');
@@ -850,10 +280,6 @@ const CardItem: React.FC<{ cardId: string }> = React.memo(({ cardId }) => {
     return <CardItemBase cardId={cardId} />;
 });
 
-const CommentItem: React.FC<{ commentId: string }> = React.memo(({ commentId }) => {
-    return <CommentItemBase commentId={commentId} />;
-});
-
 function shallowEqualIds(a: ID[] | undefined, b: ID[] | undefined): boolean {
     if (a === b) return true;
     if (!a || !b) return false;
@@ -868,39 +294,6 @@ const CommentsList: React.FC<{ commentIds: ID[] }> = React.memo(
     },
     (prev, next) => shallowEqualIds(prev.commentIds, next.commentIds),
 );
-
-const SidePanel: React.FC<{ adapter: StoreAdapter }> = ({ adapter }) => {
-    useCounterKey('SidePanel');
-    const [text, setText] = useState('');
-
-    const handleTextChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        setText(e.target.value);
-    }, []);
-
-    const handleFocus = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
-        e.currentTarget.style.borderColor = styles.colors.primary;
-        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(102, 126, 234, 0.1)';
-    }, []);
-
-    const handleBlur = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
-        e.currentTarget.style.borderColor = styles.colors.gray[500];
-        e.currentTarget.style.boxShadow = 'none';
-    }, []);
-
-    return (
-        <div style={styles.sidePanelStyles.container}>
-            <div style={styles.sidePanelStyles.title}>💬 Inline Comment Composer</div>
-            <input
-                style={styles.sidePanelStyles.input}
-                value={text}
-                onChange={handleTextChange}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-                placeholder="Type here to stress updates..."
-            />
-        </div>
-    );
-};
 
 // Info Banner Component
 const InfoBanner: React.FC = () => {
@@ -1006,6 +399,8 @@ const InfoBanner: React.FC = () => {
         </div>
     );
 };
+
+const TEST_COUNT = 10;
 
 const HeatmapOverlay: React.FC = () => {
     useCounterKey('HeatmapOverlay');
@@ -1227,25 +622,16 @@ export const App: React.FC = () => {
                     result = await benchmarkRunner.runBenchmark(
                         'background-churn',
                         targetAdapter.name,
-                        async (measureLatency, runNum, trackDelay) => {
-                            // Measure latency of backgroundChurnStart
-                            const latency = await measureLatency(
-                                async () => {
-                                    currentActions.backgroundChurnStart();
-                                },
-                                false, // Don't wait for paint
-                            );
-
-                            // Track artificial delay
-                            const delayStart = performance.now();
-                            await new Promise((resolve) => setTimeout(resolve, 50));
-                            currentActions.backgroundChurnStop();
-                            const delayEnd = performance.now();
-                            if (trackDelay) {
-                                trackDelay(delayEnd - delayStart);
+                        currentActions,
+                        async (wrappedActions, runNum) => {
+                            // Automatically measure latency for multiple background churn triggers
+                            for (let i = 0; i < 5; i++) {
+                                await wrappedActions.backgroundChurnStart();
                             }
+                            // Stop background churn (latency is measured automatically)
+                            wrappedActions.backgroundChurnStop();
                         },
-                        10,
+                        TEST_COUNT,
                     );
                     break;
                 case 'inline-editing':
@@ -1258,21 +644,21 @@ export const App: React.FC = () => {
                     result = await benchmarkRunner.runBenchmark(
                         'inline-editing',
                         targetAdapter.name,
-                        async (measureLatency, runNum) => {
+                        currentActions,
+                        async (wrappedActions, runNum) => {
                             const testCommentId =
                                 testComments[runNum % testComments.length]?.id || commentId;
                             const runPrefix = `Run${runNum}_`;
                             const baseTimestamp = Date.now();
                             for (let j = 0; j < 20; j++) {
-                                await measureLatency(async () => {
-                                    currentActions.updateCommentText(
-                                        testCommentId,
-                                        `${runPrefix}Typing update ${j} at ${baseTimestamp + j}`,
-                                    );
-                                }, false);
+                                // Latency is automatically measured for each action call
+                                await wrappedActions.updateCommentText(
+                                    testCommentId,
+                                    `${runPrefix}Typing update ${j} at ${baseTimestamp + j}`,
+                                );
                             }
                         },
-                        10,
+                        TEST_COUNT,
                     );
                     break;
                 case 'bulk-update':
@@ -1282,7 +668,8 @@ export const App: React.FC = () => {
                     result = await benchmarkRunner.runBenchmark(
                         'bulk-update',
                         targetAdapter.name,
-                        async (measureLatency, runNum, trackDelay) => {
+                        currentActions,
+                        async (wrappedActions, runNum) => {
                             const startIdx = (runNum * 5) % cardIds.length;
                             const testCardIds = cardIds
                                 .slice(startIdx, startIdx + 10)
@@ -1297,24 +684,14 @@ export const App: React.FC = () => {
                                     startCardIdx + Math.min(5, testCardIds.length - startCardIdx),
                                 );
                                 if (subset.length > 0) {
-                                    await measureLatency(async () => {
-                                        currentActions.bulkToggleTagOnCards(subset, tagId);
-                                    }, false);
-                                    if (i < 4 && trackDelay) {
-                                        const delayStart = performance.now();
-                                        await new Promise((resolve) => setTimeout(resolve, 3));
-                                        trackDelay(performance.now() - delayStart);
-                                    }
+                                    // Latency is automatically measured for each action call
+                                    await wrappedActions.bulkToggleTagOnCards(subset, tagId);
                                 }
                             }
-                            currentActions.backgroundChurnStart();
-                            if (trackDelay) {
-                                const delayStart = performance.now();
-                                await new Promise((resolve) => setTimeout(resolve, 40));
-                                trackDelay(performance.now() - delayStart);
-                            }
+                            // Trigger background churn (latency is automatically measured)
+                            await wrappedActions.backgroundChurnStart();
                         },
-                        10,
+                        TEST_COUNT,
                     );
                     break;
                 default:
@@ -1681,18 +1058,14 @@ const Toolbar: React.FC<{
         const result = await benchmarkRunner.runBenchmark(
             'background-churn',
             adapter.name,
-            async (measureLatency, runNum, trackDelay) => {
-                // Measure latency of background churn trigger (no paint wait, to capture adapter speed)
-                await measureLatency(async () => {
-                    actions.backgroundChurnStart();
-                }, false);
-
-                // Keep the same artificial delay so executionTime aligns with automation
-                const delayStart = performance.now();
-                await new Promise((resolve) => setTimeout(resolve, 50));
-                actions.backgroundChurnStop();
-                const delayEnd = performance.now();
-                if (trackDelay) trackDelay(delayEnd - delayStart);
+            actions,
+            async (wrappedActions) => {
+                // Automatically measure latency for multiple background churn triggers
+                for (let i = 0; i < 5; i++) {
+                    await wrappedActions.backgroundChurnStart();
+                }
+                // Stop background churn (latency is measured automatically)
+                wrappedActions.backgroundChurnStop();
             },
             10,
         );
@@ -1710,19 +1083,19 @@ const Toolbar: React.FC<{
         const result = await benchmarkRunner.runBenchmark(
             'inline-editing',
             adapter.name,
-            async (measureLatency, runNum) => {
+            actions,
+            async (wrappedActions, runNum) => {
                 const commentId = availableCommentIds[runNum % availableCommentIds.length];
                 if (!commentId) return;
                 const runPrefix = `Run${runNum}_`;
                 const baseTimestamp = Date.now();
                 for (let i = 0; i < 20; i++) {
                     const uniqueTimestamp = baseTimestamp + i;
-                    await measureLatency(async () => {
-                        actions.updateCommentText(
-                            commentId,
-                            `${runPrefix}Typing update ${i} at ${uniqueTimestamp}: testing reactivity to frequent state changes`,
-                        );
-                    }, false);
+                    // Latency is automatically measured for each action call
+                    await wrappedActions.updateCommentText(
+                        commentId,
+                        `${runPrefix}Typing update ${i} at ${uniqueTimestamp}: testing reactivity to frequent state changes`,
+                    );
                 }
             },
             10,
@@ -1745,7 +1118,8 @@ const Toolbar: React.FC<{
         const result = await benchmarkRunner.runBenchmark(
             'bulk-update',
             adapter.name,
-            async (measureLatency, runNum, trackDelay) => {
+            actions,
+            async (wrappedActions, runNum) => {
                 // Use different cards for each run to ensure variety and fresh operations
                 const startIdx = (runNum * 5) % allAvailableCards.length;
                 const cardIds = allAvailableCards
@@ -1769,32 +1143,12 @@ const Toolbar: React.FC<{
                     const cardSubset = cardIds.slice(startCardIdx, startCardIdx + subsetSize);
 
                     if (cardSubset.length > 0) {
-                        // Measure latency of bulk toggle (no paint wait)
-                        await measureLatency(async () => {
-                            actions.bulkToggleTagOnCards(cardSubset, tagId);
-                        }, false);
-                        // Small delay between operations to allow renders
-                        // Note: This delay is tracked as artificial and subtracted from executionTime
-                        if (i < 4) {
-                            const delayStart = performance.now();
-                            await new Promise((resolve) => setTimeout(resolve, 3));
-                            const delayEnd = performance.now();
-                            if (trackDelay) {
-                                trackDelay(delayEnd - delayStart);
-                            }
-                        }
+                        // Latency is automatically measured for each action call
+                        await wrappedActions.bulkToggleTagOnCards(cardSubset, tagId);
                     }
                 }
-                // Trigger card updates (and measure)
-                await measureLatency(async () => {
-                    actions.backgroundChurnStart();
-                }, false);
-                const delayStart = performance.now();
-                await new Promise((resolve) => setTimeout(resolve, 40));
-                const delayEnd = performance.now();
-                if (trackDelay) {
-                    trackDelay(delayEnd - delayStart);
-                }
+                // Trigger card updates (latency is automatically measured)
+                await wrappedActions.backgroundChurnStart();
             },
             10,
         );
@@ -1933,16 +1287,14 @@ const Toolbar: React.FC<{
                 const updateResult = await benchmarkRunner.runBenchmark(
                     'background-churn',
                     uiAdapter.name,
-                    async (measureLatency, runNum, trackDelay) => {
-                        const delayStart = performance.now();
-                        uiActions.backgroundChurnStart();
-                        await new Promise((resolve) => setTimeout(resolve, 50));
-                        uiActions.backgroundChurnStop();
-                        const delayEnd = performance.now();
-                        const artificialDelay = delayEnd - delayStart;
-                        if (trackDelay && artificialDelay > 0) {
-                            trackDelay(artificialDelay);
+                    uiActions,
+                    async (wrappedActions, runNum) => {
+                        // Automatically measure latency for multiple background churn triggers
+                        for (let i = 0; i < 5; i++) {
+                            await wrappedActions.backgroundChurnStart();
                         }
+                        // Stop background churn (latency is measured automatically)
+                        wrappedActions.backgroundChurnStop();
                     },
                     10,
                 );
@@ -1969,7 +1321,8 @@ const Toolbar: React.FC<{
                     const editResult = await benchmarkRunner.runBenchmark(
                         'inline-editing',
                         uiAdapter.name,
-                        async (measureLatency, runNum) => {
+                        uiActions,
+                        async (wrappedActions, runNum) => {
                             // Use different comment for each run to ensure fresh data
                             const testCommentId =
                                 testCommentIds[runNum % testCommentIds.length] || commentId;
@@ -1977,22 +1330,13 @@ const Toolbar: React.FC<{
                             const runPrefix = `Run${runNum}_`;
                             const baseTimestamp = Date.now();
 
-                            // Real performance test: rapid updates WITHOUT artificial delays or RAF synchronization
-                            // Previous version synchronized all adapters to ~60fps, hiding differences
+                            // Latency is automatically measured for each action call
                             for (let j = 0; j < 20; j++) {
                                 const uniqueTimestamp = baseTimestamp + j;
-                                // Measure state update speed WITHOUT waiting for paint
-                                // This reveals which adapters actually update faster
-                                await measureLatency(
-                                    async () => {
-                                        uiActions.updateCommentText(
-                                            testCommentId,
-                                            `${runPrefix}Typing update ${j} at ${uniqueTimestamp}: testing reactivity to frequent state changes`,
-                                        );
-                                    },
-                                    false, // DON'T wait for paint - measure state update speed
+                                await wrappedActions.updateCommentText(
+                                    testCommentId,
+                                    `${runPrefix}Typing update ${j} at ${uniqueTimestamp}: testing reactivity to frequent state changes`,
                                 );
-                                // NO artificial delay - previous 16ms delay hid all differences
                             }
                         },
                         10,
@@ -2013,7 +1357,8 @@ const Toolbar: React.FC<{
                     const bulkResult = await benchmarkRunner.runBenchmark(
                         'bulk-update',
                         uiAdapter.name,
-                        async (measureLatency, runNum, trackDelay) => {
+                        uiActions,
+                        async (wrappedActions, runNum) => {
                             // Use different cards for each run to ensure variety
                             const startIdx = (runNum * 5) % allTestCards.length;
                             const testCardIds = allTestCards
@@ -2041,28 +1386,15 @@ const Toolbar: React.FC<{
                                 );
 
                                 if (cardSubset.length > 0) {
-                                    uiActions.bulkToggleTagOnCards(cardSubset, testTagId);
-                                    // Small delay between operations to allow renders
-                                    // Note: This delay is tracked as artificial and subtracted from executionTime
-                                    if (tagI < 4) {
-                                        const delayStart = performance.now();
-                                        await new Promise((resolve) => setTimeout(resolve, 3));
-                                        const delayEnd = performance.now();
-                                        if (trackDelay) {
-                                            trackDelay(delayEnd - delayStart);
-                                        }
-                                    }
+                                    // Latency is automatically measured for each action call
+                                    await wrappedActions.bulkToggleTagOnCards(
+                                        cardSubset,
+                                        testTagId,
+                                    );
                                 }
                             }
-                            // Trigger card updates to ensure CardItem components re-render
-                            // backgroundChurnStart updates updatedAt with Date.now() which is always different
-                            uiActions.backgroundChurnStart();
-                            const delayStart = performance.now();
-                            await new Promise((resolve) => setTimeout(resolve, 40));
-                            const delayEnd = performance.now();
-                            if (trackDelay) {
-                                trackDelay(delayEnd - delayStart);
-                            }
+                            // Trigger card updates (latency is automatically measured)
+                            await wrappedActions.backgroundChurnStart();
                         },
                         10,
                     );
