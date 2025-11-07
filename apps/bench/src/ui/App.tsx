@@ -1850,6 +1850,21 @@ const Toolbar: React.FC<{
                 >
                     🧪 Test
                 </button>
+                <a
+                    href="https://github.com/abaikov/cnstra-oimdb-bench"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="View repository on GitHub"
+                    style={{
+                        ...styles.toolbarStyles.button('#24292e', false),
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                    }}
+                >
+                    🔗 GitHub
+                </a>
             </div>
         </div>
     );
