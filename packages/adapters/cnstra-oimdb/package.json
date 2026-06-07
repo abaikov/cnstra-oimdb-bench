@@ -15,7 +15,7 @@
   "dependencies": {
     "@cnstra/core": "^2.3.0",
     "@cnstra/react": "^1.1.1",
-    "@oimdb/core": "^3.0.0",
+    "@oimdb/core": "^3.2.0",
     "@oimdb/react": "^2.1.1"
   },
   "devDependencies": {

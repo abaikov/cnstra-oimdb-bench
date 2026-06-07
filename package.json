@@ -21,6 +21,7 @@
     "bench": "node scripts/bench-with-server.mjs",
     "bench:summary": "node scripts/bench-summary.mjs",
     "bench:micro": "node scripts/micro-bench.mjs",
+    "bench:micro:batch": "node scripts/micro-bench-batch.mjs",
     "bench:throughput": "node scripts/throughput.mjs",
     "lint": "echo 'No lint configured'",
     "typecheck": "tsc -b --pretty",
