@@ -242,26 +242,8 @@ const cardTagsSlice = createSlice({
         setCardTags: cardTagsAdapter.setAll,
         addCardTag: cardTagsAdapter.addOne,
         removeCardTag: cardTagsAdapter.removeOne,
-        bulkAddCardTags: (state, action: PayloadAction<CardTag[]>) => {
-            // Add multiple cardTags in one reducer call for better performance
-            for (const cardTag of action.payload) {
-                if (!state.entities[cardTag.id]) {
-                    state.ids.push(cardTag.id);
-                    state.entities[cardTag.id] = cardTag;
-                }
-            }
-        },
-        bulkRemoveCardTags: (state, action: PayloadAction<ID[]>) => {
-            // Remove multiple cardTags in one reducer call for better performance
-            const idsToRemove = new Set(action.payload);
-            state.ids = state.ids.filter((id) => {
-                if (idsToRemove.has(id)) {
-                    delete state.entities[id];
-                    return false;
-                }
-                return true;
-            });
-        },
+        bulkAddCardTags: cardTagsAdapter.addMany,
+        bulkRemoveCardTags: cardTagsAdapter.removeMany,
     },
 });
 
@@ -444,11 +426,6 @@ function createHooks(): ViewModelHooksIdsBased {
             );
             return useSelector(selectTagIds);
         },
-        useCardVisibility(cardId: ID): boolean {
-            return useSelector(
-                (state: RootReduxState) => state.cards.entities[cardId]?.isVisible ?? false,
-            );
-        },
     };
 }
 
@@ -479,41 +456,52 @@ const actions = (store: ReduxStore) => ({
     bulkToggleTagOnCards(cardIds: ID[], tagId: ID) {
         const state = store.getState();
         let counter = Object.keys(state.cardTags.entities).length;
-        // Create a map for O(1) lookup: (cardId, tagId) -> CardTag
-        const existingTagMap = new Map<string, CardTag>();
-        for (const id in state.cardTags.entities) {
-            const ct = state.cardTags.entities[id];
-            if (ct) {
-                existingTagMap.set(`${ct.cardId}:${ct.tagId}`, ct);
-            }
-        }
+        const cardTagsEntities = state.cardTags.entities;
 
-        // Track what we're doing: removals and additions
         const toRemove: string[] = [];
         const toAdd: CardTag[] = [];
-        const affectedCardIds = new Set<ID>();
+        const addedTagById = new Map<ID, ID>();
+        const cardUpdates: Array<{ id: ID; changes: Partial<CardWithCommentIds> }> = [];
 
         for (const cardId of cardIds) {
-            const key = `${cardId}:${tagId}`;
-            const existing = existingTagMap.get(key);
-            if (existing) {
-                toRemove.push(existing.id);
-                existingTagMap.delete(key); // Remove from map so we can use it to track final state
+            const card = state.cards.entities[cardId];
+            if (!card) continue;
+            const cardTagIds = card.cardTagIds ?? [];
+            // Find existing cardTag for this (cardId, tagId) via the per-card list —
+            // O(tags-per-card), not O(all cardTags).
+            let existingId: ID | undefined;
+            for (const ctId of cardTagIds) {
+                if (cardTagsEntities[ctId]?.tagId === tagId) {
+                    existingId = ctId;
+                    break;
+                }
+            }
+            let newCardTagIds: ID[];
+            if (existingId) {
+                toRemove.push(existingId);
+                newCardTagIds = cardTagIds.filter((id) => id !== existingId);
             } else {
                 const newId = `cardtag_${counter++}`;
-                const newCardTag: CardTag = {
-                    id: newId,
-                    cardId,
-                    tagId,
-                    createdAt: Date.now(),
-                };
-                toAdd.push(newCardTag);
-                existingTagMap.set(key, newCardTag); // Add to map to track final state
+                toAdd.push({ id: newId, cardId, tagId, createdAt: Date.now() });
+                addedTagById.set(newId, tagId);
+                newCardTagIds = [...cardTagIds, newId];
             }
-            affectedCardIds.add(cardId);
+            // Recompute dedup tagIds from the (small) per-card list.
+            const seen = new Set<ID>();
+            const tagIds: ID[] = [];
+            for (const ctId of newCardTagIds) {
+                const t = cardTagsEntities[ctId]?.tagId ?? addedTagById.get(ctId);
+                if (t && state.tags.entities[t] && !seen.has(t)) {
+                    seen.add(t);
+                    tagIds.push(t);
+                }
+            }
+            cardUpdates.push({
+                id: cardId,
+                changes: { cardTagIds: newCardTagIds, tagIds } as Partial<CardWithCommentIds>,
+            });
         }
 
-        // Use bulk operations instead of individual actions
         batch(() => {
             if (toRemove.length > 0) {
                 store.dispatch(cardTagsSlice.actions.bulkRemoveCardTags(toRemove));
@@ -521,68 +509,10 @@ const actions = (store: ReduxStore) => ({
             if (toAdd.length > 0) {
                 store.dispatch(cardTagsSlice.actions.bulkAddCardTags(toAdd));
             }
+            if (cardUpdates.length > 0) {
+                store.dispatch(cardsSlice.actions.bulkUpdateCards(cardUpdates));
+            }
         });
-
-        // Rebuild tagIds and cardTagIds ONLY for affected cards - update them directly in card objects
-        // Get state after cardTags updates (outside batch to get final state)
-        const currentState = store.getState();
-
-        // Collect all card updates in one array for bulk update
-        const cardUpdates: Array<{ id: ID; changes: Partial<CardWithCommentIds> }> = [];
-
-        for (const cardId of affectedCardIds) {
-            const seenTagIds = new Set<ID>();
-            const tagIds: ID[] = [];
-            const cardTagIds: ID[] = [];
-
-            // Get all cardTags for this card (from updated state)
-            for (const cardTag of Object.values(currentState.cardTags.entities)) {
-                if (
-                    cardTag?.cardId === cardId &&
-                    cardTag.tagId &&
-                    currentState.tags.entities[cardTag.tagId]
-                ) {
-                    if (!seenTagIds.has(cardTag.tagId)) {
-                        seenTagIds.add(cardTag.tagId);
-                        tagIds.push(cardTag.tagId);
-                    }
-                    cardTagIds.push(cardTag.id);
-                }
-            }
-
-            // Check if update is needed
-            const currentCard = currentState.cards.entities[cardId];
-            if (currentCard) {
-                const currentTagIds = currentCard.tagIds;
-                const currentCardTagIds = currentCard.cardTagIds;
-
-                // Only update if different (check length and content)
-                const tagIdsChanged =
-                    !currentTagIds ||
-                    currentTagIds.length !== tagIds.length ||
-                    !tagIds.every((id, idx) => currentTagIds[idx] === id);
-
-                const cardTagIdsChanged =
-                    !currentCardTagIds ||
-                    currentCardTagIds.length !== cardTagIds.length ||
-                    !cardTagIds.every((id, idx) => currentCardTagIds[idx] === id);
-
-                if (tagIdsChanged || cardTagIdsChanged) {
-                    cardUpdates.push({
-                        id: cardId,
-                        changes: {
-                            ...(tagIdsChanged && { tagIds }),
-                            ...(cardTagIdsChanged && { cardTagIds }),
-                        } as Partial<CardWithCommentIds>,
-                    });
-                }
-            }
-        }
-
-        // Bulk update all cards at once
-        if (cardUpdates.length > 0) {
-            store.dispatch(cardsSlice.actions.bulkUpdateCards(cardUpdates));
-        }
     },
 
     backgroundChurnStart() {

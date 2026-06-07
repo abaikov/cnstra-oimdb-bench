@@ -1,13 +1,19 @@
 import * as React from 'react';
-import { createContext } from 'react';
+import { createContext, useContext } from 'react';
 import { CNSProvider } from '@cnstra/react';
 import { CNS, neuron, collateral } from '@cnstra/core';
-import { OIMEventQueue, OIMRICollection, OIMReactiveIndexManual } from '@oimdb/core';
 import {
-    OIMRICollectionsProvider,
-    useOIMCollectionsContext,
+    OIMEventQueue,
+    OIMReactiveCollection,
+    OIMReactiveCollectionIndexManualArrayBased,
+    createInPlaceEntityUpdater,
+} from '@oimdb/core';
+import {
+    OIMCollectionsProvider,
     useSelectEntityByPk,
-    useSelectPksByIndexKey,
+    useSelectPksByIndexKeyArrayBased,
+    useSelectEntityByPkSignal,
+    useSelectPksByIndexKeyArrayBasedSignal,
 } from '@oimdb/react';
 import type { StoreAdapter, StoreHandle, ViewModelHooksIdsBased } from '@bench/core';
 import type {
@@ -27,52 +33,80 @@ type AppState = {
     activeDeckId: string | null;
 };
 
-function createCnstraOimdbStore(initialData: RootState) {
+function createCnstraOimdbStore(initialData: RootState, inPlace = false) {
     const queue = new OIMEventQueue({});
-    const cardsByDeckIndex = new OIMReactiveIndexManual<string, string>(queue);
-    const allCardsIndex = new OIMReactiveIndexManual<string, string>(queue);
-    const commentsByCardIndex = new OIMReactiveIndexManual<string, string>(queue);
-    const assignmentsByCardIndex = new OIMReactiveIndexManual<string, string>(queue);
-    const tagsByCardIndex = new OIMReactiveIndexManual<string, string>(queue);
-    // Users by card assignments (userIds grouped by cardId)
-    const usersByAssignedCardIndex = new OIMReactiveIndexManual<string, string>(queue);
 
+    // In-place mode mutates the stored entity object instead of producing a new
+    // one on each upsert (no allocation). Consumed via the *Signal hooks, which
+    // re-render on key subscription rather than reference change.
+    const upd = <T extends object>() =>
+        inPlace ? createInPlaceEntityUpdater<T>() : undefined;
+
+    // Collections (entities only — indexes live next to them in oimdb v2)
     const collections = {
-        decks: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (deck: Deck) => deck.id },
-            indexes: {
-                all: new OIMReactiveIndexManual<string, string>(queue),
-            },
+        decks: new OIMReactiveCollection<Deck, string>(queue, {
+            selectPk: (deck) => deck.id,
+            updateEntity: upd<Deck>(),
         }),
-        cards: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (card: Card) => card.id },
-            indexes: { byDeck: cardsByDeckIndex, all: allCardsIndex },
+        cards: new OIMReactiveCollection<Card, string>(queue, {
+            selectPk: (card) => card.id,
+            updateEntity: upd<Card>(),
         }),
-        comments: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (comment: Comment) => comment.id },
-            indexes: { byCard: commentsByCardIndex },
+        comments: new OIMReactiveCollection<Comment, string>(queue, {
+            selectPk: (comment) => comment.id,
+            updateEntity: upd<Comment>(),
         }),
-        users: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (user: User) => user.id },
-            indexes: { assignedCardId: usersByAssignedCardIndex },
+        users: new OIMReactiveCollection<User, string>(queue, {
+            selectPk: (user) => user.id,
+            updateEntity: upd<User>(),
         }),
-        tags: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (tag: Tag) => tag.id },
-            indexes: {},
+        tags: new OIMReactiveCollection<Tag, string>(queue, {
+            selectPk: (tag) => tag.id,
+            updateEntity: upd<Tag>(),
         }),
-        cardAssignments: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (assignment: CardAssignment) => assignment.id },
-            indexes: { byCard: assignmentsByCardIndex },
+        cardAssignments: new OIMReactiveCollection<CardAssignment, string>(queue, {
+            selectPk: (assignment) => assignment.id,
+            updateEntity: upd<CardAssignment>(),
         }),
-        cardTags: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (cardTag: CardTag) => cardTag.id },
-            indexes: {
-                byCard: tagsByCardIndex,
-            },
+        cardTags: new OIMReactiveCollection<CardTag, string>(queue, {
+            selectPk: (cardTag) => cardTag.id,
+            updateEntity: upd<CardTag>(),
         }),
-        appState: new OIMRICollection(queue, {
-            collectionOpts: { selectPk: (state: AppState) => state.id },
-            indexes: {},
+        appState: new OIMReactiveCollection<AppState, string>(queue, {
+            selectPk: (state) => state.id,
+            updateEntity: upd<AppState>(),
+        }),
+    };
+
+    // Collection-bound reactive indexes (array-based, manual). Each index resolves
+    // its PKs through the collection it indexes.
+    const indexes = {
+        decksAll: new OIMReactiveCollectionIndexManualArrayBased<string, string, Deck>(queue, {
+            collection: collections.decks,
+        }),
+        cardsByDeck: new OIMReactiveCollectionIndexManualArrayBased<string, string, Card>(queue, {
+            collection: collections.cards,
+        }),
+        allCards: new OIMReactiveCollectionIndexManualArrayBased<string, string, Card>(queue, {
+            collection: collections.cards,
+        }),
+        commentsByCard: new OIMReactiveCollectionIndexManualArrayBased<string, string, Comment>(
+            queue,
+            { collection: collections.comments },
+        ),
+        assignmentsByCard: new OIMReactiveCollectionIndexManualArrayBased<
+            string,
+            string,
+            CardAssignment
+        >(queue, { collection: collections.cardAssignments }),
+        // userIds grouped by cardId — resolves through the users collection
+        usersByAssignedCard: new OIMReactiveCollectionIndexManualArrayBased<string, string, User>(
+            queue,
+            { collection: collections.users },
+        ),
+        // cardTag ids grouped by cardId — resolves through the cardTags collection
+        tagsByCard: new OIMReactiveCollectionIndexManualArrayBased<string, string, CardTag>(queue, {
+            collection: collections.cardTags,
         }),
     };
 
@@ -98,12 +132,13 @@ function createCnstraOimdbStore(initialData: RootState) {
         }
         return map;
     };
-    collections.decks.indexes.all.addPks(
+
+    indexes.decksAll.addPks(
         'all',
         Object.values(initialData.entities.decks).map((d) => d.id),
     );
     const cardsArray = Object.values(initialData.entities.cards);
-    allCardsIndex.addPks(
+    indexes.allCards.addPks(
         'all',
         cardsArray.map((c) => c.id),
     );
@@ -111,44 +146,44 @@ function createCnstraOimdbStore(initialData: RootState) {
         cardsArray,
         (c) => c.deckId,
         (c) => c.id,
-    ).forEach((ids, k) => cardsByDeckIndex.addPks(k, ids));
+    ).forEach((ids, k) => indexes.cardsByDeck.addPks(k, ids));
     groupByKey(
         Object.values(initialData.entities.comments),
         (c) => c.cardId,
         (c) => c.id,
-    ).forEach((ids, k) => commentsByCardIndex.addPks(k, ids));
+    ).forEach((ids, k) => indexes.commentsByCard.addPks(k, ids));
     const assignmentsArray = Object.values(initialData.entities.cardAssignments);
     groupByKey(
         assignmentsArray,
         (a) => a.cardId,
         (a) => a.id,
-    ).forEach((ids, k) => assignmentsByCardIndex.addPks(k, ids));
+    ).forEach((ids, k) => indexes.assignmentsByCard.addPks(k, ids));
     // Precompute users by assigned card for fast lookup in hooks
     groupByKey(
         assignmentsArray,
         (a) => a.cardId,
         (a) => a.userId,
-    ).forEach((ids, k) => usersByAssignedCardIndex.addPks(k, ids));
+    ).forEach((ids, k) => indexes.usersByAssignedCard.addPks(k, ids));
     groupByKey(
         Object.values(initialData.entities.cardTags),
         (ct) => ct.cardId,
         (ct) => ct.id,
-    ).forEach((ids, k) => tagsByCardIndex.addPks(k, ids));
+    ).forEach((ids, k) => indexes.tagsByCard.addPks(k, ids));
     queue.flush();
 
     const collaterals = {
-        activeDeck: collateral<string>('setActiveDeck'),
-        updateCard: collateral<{ id: ID; changes: Partial<Card> }>('updateCard'),
-        updateComment: collateral<{ id: ID; text: string }>('updateComment'),
-        editComment: collateral<{ id: ID; editing: boolean }>('editComment'),
-        renameUser: collateral<{ id: ID; name: string }>('renameUser'),
-        bulkTag: collateral<{ cardIds: ID[]; tagId: ID }>('bulkToggleTag'),
-        churn: collateral<boolean>('backgroundChurn'),
-        setCardVisibility: collateral<{ cardId: ID; isVisible: boolean }>('setCardVisibility'),
+        activeDeck: collateral<string>(),
+        updateCard: collateral<{ id: ID; changes: Partial<Card> }>(),
+        updateComment: collateral<{ id: ID; text: string }>(),
+        editComment: collateral<{ id: ID; editing: boolean }>(),
+        renameUser: collateral<{ id: ID; name: string }>(),
+        bulkTag: collateral<{ cardIds: ID[]; tagId: ID }>(),
+        churn: collateral<boolean>(),
+        setCardVisibility: collateral<{ cardId: ID; isVisible: boolean }>(),
     };
 
     const cns = new CNS([
-        neuron('app', {}).dendrite({
+        neuron({}).dendrite({
             collateral: collaterals.activeDeck,
             response: (payload: string) => {
                 const state = collections.appState.getOneByPk('app');
@@ -157,7 +192,7 @@ function createCnstraOimdbStore(initialData: RootState) {
                 queue.flush();
             },
         }),
-        neuron('comments', {})
+        neuron({})
             .dendrite({
                 collateral: collaterals.updateComment,
                 response: (payload: { id: ID; text: string }) => {
@@ -186,7 +221,7 @@ function createCnstraOimdbStore(initialData: RootState) {
                     queue.flush();
                 },
             }),
-        neuron('users', {}).dendrite({
+        neuron({}).dendrite({
             collateral: collaterals.renameUser,
             response: (payload: { id: ID; name: string }) => {
                 const existing = collections.users.getOneByPk(payload.id) as User | undefined;
@@ -195,17 +230,19 @@ function createCnstraOimdbStore(initialData: RootState) {
                 queue.flush();
             },
         }),
-        neuron('cardTags', {}).dendrite({
+        neuron({}).dendrite({
             collateral: collaterals.bulkTag,
             response: (payload: { cardIds: ID[]; tagId: ID }) => {
                 // Get current count from PKs (more efficient than getAll())
-                const allPks = collections.cardTags.collection.getAllPks();
+                const allPks = collections.cardTags.getAllPks();
                 let counter = allPks.length;
-                for (const cardId of payload.cardIds) {
-                    const pks = Array.from(collections.cardTags.indexes.byCard.getPksByKey(cardId));
+                for (let i = 0; i < payload.cardIds.length; i++) {
+                    const cardId = payload.cardIds[i];
+                    const pks = Array.from(indexes.tagsByCard.getPksByKey(cardId) ?? []);
                     let existingId: string | undefined;
                     // Optimize: check tagId directly from PKs using index instead of fetching entities
-                    for (const pk of pks) {
+                    for (let j = 0; j < pks.length; j++) {
+                        const pk = pks[j];
                         const ct = collections.cardTags.getOneByPk(pk as string) as
                             | CardTag
                             | undefined;
@@ -215,8 +252,8 @@ function createCnstraOimdbStore(initialData: RootState) {
                         }
                     }
                     if (existingId) {
-                        collections.cardTags.removeOne({ id: existingId } as CardTag);
-                        tagsByCardIndex.removePks(cardId, [existingId]);
+                        indexes.tagsByCard.removePks(cardId, [existingId]);
+                        collections.cardTags.removeOneByPk(existingId);
                     } else {
                         const newCardTag: CardTag = {
                             id: `cardtag_${counter++}`,
@@ -225,13 +262,13 @@ function createCnstraOimdbStore(initialData: RootState) {
                             createdAt: Date.now(),
                         };
                         collections.cardTags.upsertOne(newCardTag);
-                        tagsByCardIndex.addPks(cardId, [newCardTag.id]);
+                        indexes.tagsByCard.addPks(cardId, [newCardTag.id]);
                     }
                 }
                 queue.flush();
             },
         }),
-        neuron('cards', {})
+        neuron({})
             .dendrite({
                 collateral: collaterals.updateCard,
                 response: (payload: { id: ID; changes: Partial<Card> }) => {
@@ -248,14 +285,14 @@ function createCnstraOimdbStore(initialData: RootState) {
                 collateral: collaterals.churn,
                 response: (payload: boolean) => {
                     if (payload) {
-                        const pkSet = allCardsIndex.getPksByKey('all');
+                        const pkArray = indexes.allCards.getPksByKey('all');
                         let count = 0;
-                        for (const pk of pkSet) {
+                        for (let i = 0; i < pkArray.length; i++) {
                             if (count >= 100) break;
                             count++;
-                            const card = collections.cards.getOneByPk(pk as string) as Card;
+                            const id = pkArray[i];
                             collections.cards.upsertOne({
-                                id: card.id,
+                                id,
                                 updatedAt: Date.now(),
                             } as Card);
                         }
@@ -283,6 +320,7 @@ function createCnstraOimdbStore(initialData: RootState) {
     return {
         cns,
         collections,
+        indexes,
         decksOrder: initialData.decksOrder,
         queue,
         collaterals,
@@ -302,60 +340,115 @@ const CnstraOimdbProvider: React.FC<CnstraOimdbProviderProps> = ({
     return (
         <CnstraStoreContext.Provider value={s}>
             <CNSProvider cns={s.cns}>
-                <OIMRICollectionsProvider collections={s.collections as any}>
+                <OIMCollectionsProvider collections={s.collections}>
                     {children}
-                </OIMRICollectionsProvider>
+                </OIMCollectionsProvider>
             </CNSProvider>
         </CnstraStoreContext.Provider>
     );
 };
+
+function useStore(): CnstraOimdbStore {
+    return useContext(CnstraStoreContext)!;
+}
+
 function createHooks(): ViewModelHooksIdsBased {
     return {
         useDeckIds(): ID[] {
-            const { decks } = useOIMCollectionsContext();
-            return useSelectPksByIndexKey(decks.indexes.all, 'all') as ID[];
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBased(indexes.decksAll, 'all') as ID[];
         },
         useDeckById(id: ID): Deck | undefined {
-            const { decks } = useOIMCollectionsContext();
-            return useSelectEntityByPk(decks, id) as Deck | undefined;
+            const { collections } = useStore();
+            return useSelectEntityByPk(collections.decks, id) as Deck | undefined;
         },
         useCardById(id: ID): Card | undefined {
-            const { cards } = useOIMCollectionsContext();
-            return useSelectEntityByPk(cards, id) as Card | undefined;
+            const { collections } = useStore();
+            return useSelectEntityByPk(collections.cards, id) as Card | undefined;
         },
         useCommentById(id: ID): Comment | undefined {
-            const { comments } = useOIMCollectionsContext();
-            return useSelectEntityByPk(comments, id) as Comment | undefined;
+            const { collections } = useStore();
+            return useSelectEntityByPk(collections.comments, id) as Comment | undefined;
         },
         useUserById(id: ID): User | undefined {
-            const { users } = useOIMCollectionsContext();
-            return useSelectEntityByPk(users, id) as User | undefined;
+            const { collections } = useStore();
+            return useSelectEntityByPk(collections.users, id) as User | undefined;
         },
         useActiveDeckId(): ID | null {
-            const { appState } = useOIMCollectionsContext();
-            const state = useSelectEntityByPk(appState, 'app') as AppState | undefined;
+            const { collections } = useStore();
+            const state = useSelectEntityByPk(collections.appState, 'app') as AppState | undefined;
             return state?.activeDeckId ?? null;
         },
         useCardIdsByDeckId(deckId: ID): ID[] {
-            const { cards } = useOIMCollectionsContext();
-            return useSelectPksByIndexKey(cards.indexes.byDeck, deckId) as ID[];
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBased(indexes.cardsByDeck, deckId) as ID[];
         },
         useCommentIdsByCardId(cardId: ID): ID[] {
-            const { comments } = useOIMCollectionsContext();
-            return useSelectPksByIndexKey(comments.indexes.byCard, cardId) as ID[];
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBased(indexes.commentsByCard, cardId) as ID[];
         },
         useAssigneeIdsByCardId(cardId: ID): ID[] {
-            const { users } = useOIMCollectionsContext();
-            return useSelectPksByIndexKey(users.indexes.assignedCardId, cardId) as ID[];
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBased(indexes.usersByAssignedCard, cardId) as ID[];
         },
         useTagIdsByCardId(cardId: ID): ID[] {
-            const { cardTags } = useOIMCollectionsContext();
-            return useSelectPksByIndexKey(cardTags.indexes.byCard, cardId) as ID[];
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBased(indexes.tagsByCard, cardId) as ID[];
         },
-        useCardVisibility(cardId: ID): boolean {
-            const { cards } = useOIMCollectionsContext();
-            const card = useSelectEntityByPk(cards, cardId) as Card | undefined;
-            return card?.isVisible ?? false;
+    };
+}
+
+// "Signal" hooks: identical reads, but via @oimdb/react's *Signal hooks, which
+// re-render on key subscription (not on reference change) and read the current
+// value. This is what pairs with the in-place entity updater (mutated entities
+// keep the same reference, so a ref-based hook wouldn't re-render).
+function createSignalHooks(): ViewModelHooksIdsBased {
+    return {
+        useDeckIds(): ID[] {
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBasedSignal(indexes.decksAll, 'all') as ID[];
+        },
+        useDeckById(id: ID): Deck | undefined {
+            const { collections } = useStore();
+            return useSelectEntityByPkSignal(collections.decks, id) as Deck | undefined;
+        },
+        useCardById(id: ID): Card | undefined {
+            const { collections } = useStore();
+            return useSelectEntityByPkSignal(collections.cards, id) as Card | undefined;
+        },
+        useCommentById(id: ID): Comment | undefined {
+            const { collections } = useStore();
+            return useSelectEntityByPkSignal(collections.comments, id) as Comment | undefined;
+        },
+        useUserById(id: ID): User | undefined {
+            const { collections } = useStore();
+            return useSelectEntityByPkSignal(collections.users, id) as User | undefined;
+        },
+        useActiveDeckId(): ID | null {
+            const { collections } = useStore();
+            const state = useSelectEntityByPkSignal(collections.appState, 'app') as
+                | AppState
+                | undefined;
+            return state?.activeDeckId ?? null;
+        },
+        useCardIdsByDeckId(deckId: ID): ID[] {
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBasedSignal(indexes.cardsByDeck, deckId) as ID[];
+        },
+        useCommentIdsByCardId(cardId: ID): ID[] {
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBasedSignal(indexes.commentsByCard, cardId) as ID[];
+        },
+        useAssigneeIdsByCardId(cardId: ID): ID[] {
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBasedSignal(
+                indexes.usersByAssignedCard,
+                cardId,
+            ) as ID[];
+        },
+        useTagIdsByCardId(cardId: ID): ID[] {
+            const { indexes } = useStore();
+            return useSelectPksByIndexKeyArrayBasedSignal(indexes.tagsByCard, cardId) as ID[];
         },
     };
 }
@@ -409,5 +502,113 @@ function createCnstraOimdbAdapter(): StoreAdapter {
 }
 
 export const cnstraOimdbAdapter = createCnstraOimdbAdapter();
+
+// In-place variant: collections use the in-place entity updater (mutate the
+// stored object, no allocation per upsert) consumed via the *Signal hooks.
+// For A/B-ing the in-place path against the default merge path.
+function createCnstraOimdbInPlaceAdapter(): StoreAdapter {
+    return {
+        name: 'Cnstra + Oimdb (in-place)',
+        createStore: (initial) => createCnstraOimdbStore(initial, true),
+        Provider: CnstraOimdbProvider,
+        get hooks() {
+            return createSignalHooks();
+        },
+        bindActions(storeHandle: StoreHandle) {
+            return actions(storeHandle as CnstraOimdbStore);
+        },
+    };
+}
+
+export const cnstraOimdbInPlaceAdapter = createCnstraOimdbInPlaceAdapter();
+
+// Pure OIMDB, NO cnstra: actions write straight to collections (no cns.stimulate
+// orchestration). Same store + same useSyncExternalStore hooks. Used to isolate
+// the cnstra-orchestration cost from the React-binding cost.
+const pureActions = (store: CnstraOimdbStore) => {
+    const { collections, indexes, queue } = store;
+    return {
+        setActiveDeck(id: ID) {
+            collections.appState.upsertOne({ id: 'app', activeDeckId: id });
+            queue.flush();
+        },
+        updateCard(cardId: ID, changes: Partial<Card>) {
+            if (!collections.cards.getOneByPk(cardId)) return;
+            collections.cards.upsertOne({ id: cardId, ...changes } as Card);
+            queue.flush();
+        },
+        updateCommentText(commentId: ID, text: string) {
+            const e = collections.comments.getOneByPk(commentId) as Comment | undefined;
+            if (e?.text === text) return;
+            collections.comments.upsertOne({ id: commentId, text } as Comment);
+            queue.flush();
+        },
+        setCommentEditing(commentId: ID, isEditing: boolean) {
+            const e = collections.comments.getOneByPk(commentId) as Comment | undefined;
+            if (!!e?.isEditing === isEditing) return;
+            collections.comments.upsertOne({ id: commentId, isEditing } as Comment);
+            queue.flush();
+        },
+        renameUser(userId: ID, name: string) {
+            const e = collections.users.getOneByPk(userId) as User | undefined;
+            if (e?.name === name) return;
+            collections.users.upsertOne({ id: userId, name } as User);
+            queue.flush();
+        },
+        bulkToggleTagOnCards(cardIds: ID[], tagId: ID) {
+            let counter = collections.cardTags.getAllPks().length;
+            for (const cardId of cardIds) {
+                const pks = Array.from(indexes.tagsByCard.getPksByKey(cardId) ?? []);
+                let existingId: string | undefined;
+                for (const pk of pks) {
+                    const ct = collections.cardTags.getOneByPk(pk as string) as CardTag | undefined;
+                    if (ct?.tagId === tagId) {
+                        existingId = ct.id;
+                        break;
+                    }
+                }
+                if (existingId) {
+                    indexes.tagsByCard.removePks(cardId, [existingId]);
+                    collections.cardTags.removeOneByPk(existingId);
+                } else {
+                    const nt: CardTag = { id: `cardtag_${counter++}`, cardId, tagId, createdAt: Date.now() };
+                    collections.cardTags.upsertOne(nt);
+                    indexes.tagsByCard.addPks(cardId, [nt.id]);
+                }
+            }
+            queue.flush();
+        },
+        backgroundChurnStart() {
+            const pkArray = indexes.allCards.getPksByKey('all');
+            for (let i = 0; i < pkArray.length && i < 100; i++) {
+                collections.cards.upsertOne({ id: pkArray[i], updatedAt: Date.now() } as Card);
+            }
+            queue.flush();
+        },
+        backgroundChurnStop() {},
+        setCardVisibility(cardId: ID, isVisible: boolean) {
+            const e = collections.cards.getOneByPk(cardId) as Card | undefined;
+            if (!e || e.isVisible === isVisible) return;
+            collections.cards.upsertOne({ id: cardId, isVisible } as Card);
+            queue.flush();
+        },
+    };
+};
+
+function createOimdbPureAdapter(): StoreAdapter {
+    return {
+        name: 'Oimdb (no cnstra)',
+        createStore: createCnstraOimdbStore,
+        Provider: CnstraOimdbProvider,
+        get hooks() {
+            return createHooks();
+        },
+        bindActions(storeHandle: StoreHandle) {
+            return pureActions(storeHandle as CnstraOimdbStore);
+        },
+    };
+}
+
+export const oimdbPureAdapter = createOimdbPureAdapter();
 
 export default cnstraOimdbAdapter;

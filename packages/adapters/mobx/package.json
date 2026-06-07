@@ -1,0 +1,20 @@
+{
+  "name": "@bench/adapter-mobx",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.tsx",
+  "module": "src/index.tsx",
+  "types": "src/index.tsx",
+  "files": ["dist"],
+  "scripts": {"build": "tsc -p tsconfig.build.json"},
+  "dependencies": {
+    "mobx": "^6.16.0",
+    "mobx-react-lite": "^4.1.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/react": "^18.2.21"
+  },
+  "peerDependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"}
+}

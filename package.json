@@ -20,6 +20,8 @@
     "preview": "npm run -w @bench/bench preview",
     "bench": "node scripts/bench-with-server.mjs",
     "bench:summary": "node scripts/bench-summary.mjs",
+    "bench:micro": "node scripts/micro-bench.mjs",
+    "bench:throughput": "node scripts/throughput.mjs",
     "lint": "echo 'No lint configured'",
     "typecheck": "tsc -b --pretty",
     "format": "prettier --write .",
@@ -31,13 +33,13 @@
   },
   "devDependencies": {
     "@nx/workspace": "^19.0.0",
-    "nx": "^19.0.0",
-    "typescript": "^5.5.4",
-    "prettier": "^3.3.3",
-    "vite": "^5.4.19",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite-tsconfig-paths": "^5.1.3",
-    "puppeteer": "^21.6.1"
+    "nx": "^19.0.0",
+    "prettier": "^3.3.3",
+    "puppeteer": "^21.6.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.19",
+    "vite-tsconfig-paths": "^5.1.3"
   },
   "repository": {
     "type": "git",

@@ -1,4 +1,8 @@
-import React, { useMemo, useState, useContext, createContext, useCallback, useEffect } from 'react';
+import React, { useMemo, useState, useContext, createContext, useCallback, useEffect, Profiler } from 'react';
+import { flushSync } from 'react-dom';
+
+// Accumulates React commit time (Profiler actualDuration) for the throughput probe.
+let __reactCommitMs = 0;
 import {
     generateDataset,
     createRenderCounter,
@@ -10,13 +14,34 @@ import type { StoreAdapter, RootState, ID, Card, Comment } from '@bench/core';
 import { BenchmarkResults } from './BenchmarkResults';
 import { DebugRenders } from './DebugRenders';
 import * as styles from './App.styles';
-import { cnstraOimdbAdapter } from '@bench/adapter-cnstra-oimdb';
+import {
+    cnstraOimdbAdapter,
+    cnstraOimdbInPlaceAdapter,
+    oimdbPureAdapter,
+} from '@bench/adapter-cnstra-oimdb';
 import { reduxAdapter } from '@bench/adapter-redux';
 import { effectorAdapter } from '@bench/adapter-effector';
+import { effectorAtomicAdapter } from '@bench/adapter-effector-atomic';
 import { zustandAdapter } from '@bench/adapter-zustand';
+import { mobxAdapter, mobxDeepAdapter } from '@bench/adapter-mobx';
 import { createBenchmarkRunner, calculateMedian } from './benchmarkRunner';
 
 const AdapterContext = createContext<{ adapter: StoreAdapter; actions: any } | null>(null);
+
+// The entity-reading leaf components, wrapped per-adapter (observer() for MobX,
+// React.memo otherwise). Provided once per active adapter so libraries can use
+// their idiomatic component-level reactivity.
+type LeafComponents = {
+    CardItem: React.ComponentType<{ cardId: string }>;
+    CommentItem: React.ComponentType<{ commentId: string }>;
+    DeckItem: React.ComponentType<{ deckId: string }>;
+};
+const LeafComponentsContext = createContext<LeafComponents | null>(null);
+function useLeaf(): LeafComponents {
+    const c = useContext(LeafComponentsContext);
+    if (!c) throw new Error('Leaf components not provided');
+    return c;
+}
 
 // Intersection Observer Context for tracking card visibility
 type ObserverCallbacks = {
@@ -30,9 +55,14 @@ const IntersectionObserverContext = createContext<ObserverCallbacks | null>(null
 // Create adapters - only ids-based versions
 const adapters: StoreAdapter[] = [
     cnstraOimdbAdapter,
+    cnstraOimdbInPlaceAdapter,
+    oimdbPureAdapter,
     effectorAdapter,
     reduxAdapter,
     zustandAdapter,
+    mobxAdapter,
+    mobxDeepAdapter,
+    effectorAtomicAdapter,
 ].filter(Boolean) as StoreAdapter[];
 
 // Global render counter for non-benchmark renders (UI components)
@@ -153,7 +183,8 @@ const CardItemBase: React.FC<{ cardId: string }> = ({ cardId }) => {
 
     const card = ctx.adapter.hooks.useCardById(cardId) as Card | undefined;
     const commentIds = ctx.adapter.hooks.useCommentIdsByCardId(cardId) as ID[];
-    const isVisible = ctx.adapter.hooks.useCardVisibility(cardId);
+    // isVisible is a field on the card we already read — no separate subscription.
+    const isVisible = card?.isVisible ?? false;
 
     const cardRef = React.useRef<HTMLDivElement>(null);
 
@@ -212,6 +243,7 @@ const CardItemBase: React.FC<{ cardId: string }> = ({ cardId }) => {
 const CommentsListBase: React.FC<{ commentIds: ID[] }> = ({ commentIds }) => {
     const ctx = useContext(AdapterContext);
     if (!ctx) throw new Error('Adapter context not found');
+    const { CommentItem } = useLeaf();
 
     return (
         <div style={styles.commentsListStyles.container}>
@@ -222,7 +254,7 @@ const CommentsListBase: React.FC<{ commentIds: ID[] }> = ({ commentIds }) => {
     );
 };
 
-const CommentItem: React.FC<{ commentId: string }> = ({ commentId }) => {
+const CommentItemBase: React.FC<{ commentId: string }> = ({ commentId }) => {
     useCounterKey('CommentItem');
     const ctx = useContext(AdapterContext);
     if (!ctx) throw new Error('Adapter context not found');
@@ -309,28 +341,15 @@ const CommentItem: React.FC<{ commentId: string }> = ({ commentId }) => {
     );
 };
 
-// Wrapper components for ids-based mode
-const CardItem: React.FC<{ cardId: string }> = React.memo(({ cardId }) => {
-    const ctx = useContext(AdapterContext);
-    if (!ctx) throw new Error('Adapter context not found');
+// CardItem / CommentItem / DeckItem are built per-adapter (observer or memo) and
+// supplied via LeafComponentsContext — see the leaf factory in the App root.
 
-    return <CardItemBase cardId={cardId} />;
+// Default React.memo (reference equality) — relies on the store giving stable
+// id-array references. Swapped from a content comparator (shallowEqualIds) so the
+// benchmark actually rewards reference stability instead of masking it.
+const CommentsList: React.FC<{ commentIds: ID[] }> = React.memo(({ commentIds }) => {
+    return <CommentsListBase commentIds={commentIds} />;
 });
-
-function shallowEqualIds(a: ID[] | undefined, b: ID[] | undefined): boolean {
-    if (a === b) return true;
-    if (!a || !b) return false;
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-    return true;
-}
-
-const CommentsList: React.FC<{ commentIds: ID[] }> = React.memo(
-    ({ commentIds }) => {
-        return <CommentsListBase commentIds={commentIds} />;
-    },
-    (prev, next) => shallowEqualIds(prev.commentIds, next.commentIds),
-);
 
 // Info Banner Component
 const InfoBanner: React.FC = () => {
@@ -568,6 +587,20 @@ export const App: React.FC = () => {
     const store = useMemo(() => adapter.createStore(dataset), [adapter, dataset]);
     const actions = useMemo(() => adapter.bindActions(store), [adapter, store]);
 
+    // Build the entity-reading leaf components for the active adapter: observer()
+    // for MobX (direct observable reads in JSX), plain React.memo otherwise.
+    const leaf = useMemo<LeafComponents>(() => {
+        const wrap = <P extends object>(c: React.ComponentType<P>): React.ComponentType<P> =>
+            adapter.observer
+                ? adapter.observer(c)
+                : (React.memo(c) as unknown as React.ComponentType<P>);
+        return {
+            CardItem: wrap(CardItemBase),
+            CommentItem: wrap(CommentItemBase),
+            DeckItem: wrap(DeckItemBase),
+        };
+    }, [adapter]);
+
     // Create Intersection Observer for tracking card visibility
     // Use a ref to track if benchmark is running - this prevents observer from interfering with benchmarks
     const isBenchmarkRunningRef = React.useRef(false);
@@ -624,6 +657,53 @@ export const App: React.FC = () => {
         (window as any).__currentAdapter = adapter;
         (window as any).__currentActions = actions;
         (window as any).__setAdapterIndex = setAdapterIndex;
+
+        // Throughput probe: synchronous render+commit per update via flushSync, so
+        // the measurement is NOT gated by the animation frame / paint cycle. It
+        // exercises real React reconciliation + the adapter's subscription path on
+        // currently-mounted cards. Reports updates/sec and µs/update.
+        (window as any).__throughput = (opts?: { n?: number }) => {
+            const n = opts?.n ?? 5000;
+            const cardIds = Array.from(document.querySelectorAll('[data-card-id]')).map((el) =>
+                el.getAttribute('data-card-id'),
+            ) as ID[];
+            if (cardIds.length === 0) return { error: 'no mounted cards' };
+            const a = (window as any).__currentActions;
+            // Install a high-timestamp render counter so useCounterKey routes into it.
+            const rcKey = '__benchmarkRenderCounter_99999999999999';
+            const rc = createRenderCounter();
+            (window as any)[rcKey] = rc;
+            // warmup (JIT)
+            for (let i = 0; i < 500; i++) {
+                flushSync(() => a.updateCard(cardIds[i % cardIds.length], { updatedAt: -1 - i }));
+            }
+            __reactCommitMs = 0; // reset React Profiler accumulator before the timed loop
+            rc.reset();
+            const t0 = performance.now();
+            for (let i = 0; i < n; i++) {
+                flushSync(() => a.updateCard(cardIds[i % cardIds.length], { updatedAt: i }));
+            }
+            const ms = performance.now() - t0;
+            const reactMs = __reactCommitMs;
+            const renders = rc.get();
+            delete (window as any)[rcKey];
+            const totalRenders = Object.values(renders).reduce((s, v) => s + (v as number), 0);
+            return {
+                adapter: (window as any).__currentAdapter?.name,
+                mountedCards: cardIds.length,
+                n,
+                totalMs: +ms.toFixed(1),
+                usPerUpdate: +((ms / n) * 1000).toFixed(2),
+                updatesPerSec: Math.round(n / (ms / 1000)),
+                // React render+commit time per update (Profiler actualDuration)
+                reactUsPerUpdate: +((reactMs / n) * 1000).toFixed(2),
+                // everything outside React commit: state update + hook subscription glue + flushSync
+                glueUsPerUpdate: +(((ms - reactMs) / n) * 1000).toFixed(2),
+                // component re-renders per update (reveals reference-stability cascades)
+                rendersPerUpdate: +(totalRenders / n).toFixed(3),
+                rendersByComponent: renders,
+            };
+        };
 
         // Expose runAndReport function for automated benchmarking
         (window as any).__runAndReport = async (
@@ -894,7 +974,14 @@ export const App: React.FC = () => {
     return (
         <Provider store={store}>
             <AdapterContext.Provider value={{ adapter, actions }}>
+              <LeafComponentsContext.Provider value={leaf}>
                 <IntersectionObserverContext.Provider value={observerCallbacks}>
+                  <Profiler
+                      id="bench"
+                      onRender={(_id, _phase, actualDuration) => {
+                          __reactCommitMs += actualDuration;
+                      }}
+                  >
                     <div style={styles.appStyles.container}>
                         {isRunning && (
                             <div style={styles.appStyles.overlay}>
@@ -1038,7 +1125,9 @@ export const App: React.FC = () => {
                             )}
                         </div>
                     </div>
+                  </Profiler>
                 </IntersectionObserverContext.Provider>
+              </LeafComponentsContext.Provider>
             </AdapterContext.Provider>
         </Provider>
     );
@@ -1046,6 +1135,7 @@ export const App: React.FC = () => {
 
 const DeckList: React.FC<{ adapter: StoreAdapter }> = ({ adapter }) => {
     useCounterKey('DeckList');
+    const { DeckItem } = useLeaf();
     const deckIds = adapter.hooks.useDeckIds();
 
     // Show more items now that we have proper scrollable list
@@ -1094,19 +1184,12 @@ const DeckItemBase: React.FC<{ deckId: string }> = ({ deckId }) => {
     );
 };
 
-// Wrapper for DeckItem
-const DeckItem: React.FC<{ deckId: string }> = React.memo(({ deckId }) => {
-    const ctx = useContext(AdapterContext);
-    if (!ctx) throw new Error('Adapter context not found');
-
-    return <DeckItemBase deckId={deckId} />;
-});
-
 // CardsList for ids-based mode - receives IDs array
 const CardsListBase: React.FC<{ cardIds: ID[] }> = ({ cardIds }) => {
     useCounterKey('CardsList');
     const ctx = useContext(AdapterContext);
     if (!ctx) throw new Error('Adapter context not found');
+    const { CardItem } = useLeaf();
 
     return (
         <div style={styles.cardsListStyles.container}>
@@ -1117,10 +1200,10 @@ const CardsListBase: React.FC<{ cardIds: ID[] }> = ({ cardIds }) => {
     );
 };
 
-const CardsList: React.FC<{ cardIds: ID[] }> = React.memo(
-    ({ cardIds }) => <CardsListBase cardIds={cardIds} />,
-    (prev, next) => shallowEqualIds(prev.cardIds, next.cardIds),
-);
+// Default reference memo — relies on the store giving a stable cardIds array.
+const CardsList: React.FC<{ cardIds: ID[] }> = React.memo(({ cardIds }) => (
+    <CardsListBase cardIds={cardIds} />
+));
 
 // Toolbar for ids-based mode
 const Toolbar: React.FC<{

@@ -6,14 +6,25 @@
   "main": "src/index.tsx",
   "module": "src/index.tsx",
   "types": "src/index.tsx",
-  "files": ["src"],
-  "scripts": {"build": "tsc -p tsconfig.build.json"},
-  "dependencies": {
-    "@cnstra/core": "1.7.0",
-    "@cnstra/react": "1.0.1",
-    "@oimdb/react": "1.1.0",
-    "@oimdb/core": "1.0.6"
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
   },
-  "devDependencies": {"typescript": "^5.5.4", "@types/react": "^18.2.21", "react": "^18.2.0"},
-  "peerDependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"}
+  "dependencies": {
+    "@cnstra/core": "^2.3.0",
+    "@cnstra/react": "^1.1.1",
+    "@oimdb/core": "^3.0.0",
+    "@oimdb/react": "^2.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.21",
+    "react": "^18.2.0",
+    "typescript": "^5.5.4"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
 }

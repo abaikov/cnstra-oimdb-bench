@@ -26,7 +26,6 @@ export type ViewModelHooksIdsBased = {
     useAssigneeIdsByCardId(cardId: ID): ID[];
     useTagIdsByCardId(cardId: ID): ID[];
     useActiveDeckId(): ID | null;
-    useCardVisibility(cardId: ID): boolean;
 };
 
 export type ViewModelHooks = ViewModelHooksIdsBased;
@@ -49,6 +48,15 @@ export type StoreAdapter = {
     Provider: (props: { store: StoreHandle; children?: any }) => any;
     hooks: ViewModelHooks;
     bindActions(store: StoreHandle): Actions;
+    /**
+     * Optional component HOC applied to the entity-reading leaf components
+     * (CardItem / CommentItem / DeckItem). Lets a library use its idiomatic
+     * component-level reactivity instead of the uniform hooks — e.g. MobX wraps
+     * them in `observer()` so the component reads observables directly in JSX
+     * (no snapshot). When omitted the harness uses plain React.memo (no-op for
+     * the adapter). Must be a stable function reference.
+     */
+    observer?: <P extends object>(c: React.ComponentType<P>) => React.ComponentType<P>;
 };
 
 export type Dataset = RootState;

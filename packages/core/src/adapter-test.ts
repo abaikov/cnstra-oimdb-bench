@@ -44,39 +44,6 @@ export async function testAdapter(adapter: StoreAdapter): Promise<AdapterTestRes
         return result;
     };
 
-    // Helper to check if component re-renders after state change
-    const checkReactivity = <T>(
-        store: any,
-        action: () => void,
-        selector: () => T,
-        validator: (before: T, after: T) => boolean,
-        errorMsg: string,
-    ): void => {
-        renderCount = 0;
-        let before: T;
-        withProvider(store, () => {
-            before = selector();
-            return null as any;
-        });
-        const initialRenderCount = renderCount;
-
-        action();
-
-        renderCount = 0;
-        let after: T;
-        withProvider(store, () => {
-            after = selector();
-            return null as any;
-        });
-        const afterRenderCount = renderCount;
-
-        if (!validator(before!, after!)) {
-            errors.push(errorMsg);
-        }
-        // Note: We can't easily check render count in this test setup because each withProvider call
-        // unmounts and remounts, so we only check data changes, not actual re-renders
-    };
-
     try {
         // Generate test data with realistic sizes for proper testing
         const dataset = generateDataset({

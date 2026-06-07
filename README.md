@@ -54,8 +54,10 @@ Read the detailed results and architectural analysis in [BENCHMARK_RESULTS.md](.
 ## 🎯 Supported State Managers
 
 - **Cnstra + Oimdb**: Reactive collections with CNS
+- **MobX**: Observable maps with `useObserver`
 - **Redux Toolkit**: Official Redux toolkit
-- **Effector**: Reactive state management
+- **Effector (ids-based)**: Idiomatic `Record` stores + `useStoreMap`
+- **Effector (atomic stores)**: One store per entity (maximally granular)
 - **Zustand**: Lightweight state management
 
 ## 🔧 Development

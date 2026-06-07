@@ -21,6 +21,8 @@ const ALL_ADAPTERS = [
     'Cnstra + Oimdb (ids-based)',
     'Redux Toolkit (ids-based)',
     'Zustand (ids-based)',
+    'MobX (ids-based)',
+    'Effector (atomic stores)',
 ];
 
 const SCENARIOS = ['background-churn', 'inline-editing', 'bulk-update'];

@@ -223,13 +223,6 @@ function createHooks(): ViewModelHooksIdsBased {
                 shallowEqualStrings,
             );
         },
-        useCardVisibility(cardId: ID): boolean {
-            const store = useZStore();
-            return useZustand(
-                store,
-                (s: ZustandState) => s.entities.cards[cardId]?.isVisible ?? false,
-            );
-        },
     };
 }
 
@@ -300,75 +293,42 @@ const actions = (store: ZStore) => ({
     bulkToggleTagOnCards(cardIds: ID[], tagId: ID) {
         store.setState((s) => {
             const cardTags = { ...s.entities.cardTags };
+            const cards = { ...s.entities.cards };
             let counter = Object.keys(cardTags).length;
-            // Create a map for O(1) lookup: (cardId, tagId) -> CardTag
-            const tagMap = new Map<string, CardTag>();
-            for (const id in cardTags) {
-                const ct = cardTags[id];
-                if (ct) {
-                    tagMap.set(`${ct.cardId}:${ct.tagId}`, ct);
-                }
-            }
-
-            const affectedCardIds = new Set<ID>();
-            const toRemove: string[] = [];
-            const toAdd: CardTag[] = [];
 
             for (const cardId of cardIds) {
-                const key = `${cardId}:${tagId}`;
-                const existing = tagMap.get(key);
-                if (existing) {
-                    toRemove.push(existing.id);
-                    delete cardTags[existing.id];
-                    tagMap.delete(key);
-                } else {
-                    const newId = `cardtag_${counter++}`;
-                    const newTag: CardTag = {
-                        id: newId,
-                        cardId,
-                        tagId,
-                        createdAt: Date.now(),
-                    };
-                    cardTags[newId] = newTag;
-                    tagMap.set(key, newTag);
-                    toAdd.push(newTag);
-                }
-                affectedCardIds.add(cardId);
-            }
-
-            // Rebuild tagIds and cardTagIds for affected cards - update them directly in card objects
-            const cards = { ...s.entities.cards };
-            for (const cardId of affectedCardIds) {
-                const seenTagIds = new Set<ID>();
-                const tagIds: ID[] = [];
-                const cardTagIds: ID[] = [];
-
-                // Get all cardTags for this card (from updated cardTags)
-                for (const cardTagId in cardTags) {
-                    const cardTag = cardTags[cardTagId];
-                    if (
-                        cardTag &&
-                        cardTag.cardId === cardId &&
-                        cardTag.tagId &&
-                        s.entities.tags[cardTag.tagId]
-                    ) {
-                        if (!seenTagIds.has(cardTag.tagId)) {
-                            seenTagIds.add(cardTag.tagId);
-                            tagIds.push(cardTag.tagId);
-                        }
-                        cardTagIds.push(cardTag.id);
+                const card = cards[cardId];
+                if (!card) continue;
+                const cardTagIds = card.cardTagIds ?? [];
+                // Find existing cardTag for this (cardId, tagId) via the per-card
+                // list — O(tags-per-card), not O(all cardTags).
+                let existingId: ID | undefined;
+                for (const ctId of cardTagIds) {
+                    if (cardTags[ctId]?.tagId === tagId) {
+                        existingId = ctId;
+                        break;
                     }
                 }
-
-                // Update card with new tagIds and cardTagIds
-                const existingCard = cards[cardId];
-                if (existingCard) {
-                    cards[cardId] = {
-                        ...existingCard,
-                        tagIds,
-                        cardTagIds,
-                    };
+                let newCardTagIds: ID[];
+                if (existingId) {
+                    delete cardTags[existingId];
+                    newCardTagIds = cardTagIds.filter((id) => id !== existingId);
+                } else {
+                    const newId = `cardtag_${counter++}`;
+                    cardTags[newId] = { id: newId, cardId, tagId, createdAt: Date.now() };
+                    newCardTagIds = [...cardTagIds, newId];
                 }
+                // Recompute dedup tagIds from the (small) per-card list.
+                const seen = new Set<ID>();
+                const tagIds: ID[] = [];
+                for (const ctId of newCardTagIds) {
+                    const t = cardTags[ctId]?.tagId;
+                    if (t && s.entities.tags[t] && !seen.has(t)) {
+                        seen.add(t);
+                        tagIds.push(t);
+                    }
+                }
+                cards[cardId] = { ...card, cardTagIds: newCardTagIds, tagIds };
             }
 
             return {
